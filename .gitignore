@@ -1,0 +1,23 @@
+# Build artifacts
+bin/
+obj/
+
+# VS / Rider / Claude IDE state
+.vs/
+.idea/
+*.user
+*.suo
+
+# Local Claude Code settings (per-machine)
+.claude/
+
+# Test results
+TestResults/
+
+# Rider/ReSharper
+_ReSharper.*/
+*.DotSettings.user
+
+# OS junk
+Thumbs.db
+.DS_Store

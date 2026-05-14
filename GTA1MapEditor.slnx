@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GTA1MapEditor.App/GTA1MapEditor.App.csproj" />
+    <Project Path="src/GTA1MapEditor.Core/GTA1MapEditor.Core.csproj" />
+    <Project Path="src/GTA1MapEditor.Rendering/GTA1MapEditor.Rendering.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GTA1MapEditor.Tests/GTA1MapEditor.Tests.csproj" />
+  </Folder>
+</Solution>
