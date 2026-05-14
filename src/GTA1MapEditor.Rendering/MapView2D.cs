@@ -62,19 +62,23 @@ public sealed class MapView2D : IMapView
     private readonly GlShader _overlayShader;
     private int _tileVao, _tileVbo;
     private int _overlayVao, _overlayVbo;
+    private int _spriteVao, _spriteVbo;
     private int _atlasTex;
     private int _tileVertexCount;
     private int _overlayVertexCount;
     private TileAtlas? _atlas;
     private CmpMap? _map;
+    private G24StyleData? _style;
+    private SpriteCache? _spriteCache;
+    private readonly float[] _spriteScratch = new float[24]; // 6 vertices * (x,y,u,v)
 
     public float ViewportWidth { get; set; } = 1;
     public float ViewportHeight { get; set; } = 1;
     public Vector2 CameraWorld { get; set; } = new(GameConfig.MapWidth / 2f, GameConfig.MapHeight / 2f);
-    public float PixelsPerTile { get; set; } = 16f;
+    public float PixelsPerTile { get; set; } = 32f;
 
     public const float MinZoom = 1f;
-    public const float MaxZoom = 96f;
+    public const float MaxZoom = 128f;
     public const float NativePixelsPerTile = 64f;
 
     public (int x, int y, int z)? Selection { get; set; }
@@ -107,13 +111,27 @@ public sealed class MapView2D : IMapView
         GL.EnableVertexAttribArray(1);
         GL.VertexAttribPointer(1, 4, VertexAttribPointerType.Float, false, 24, 8);
 
+        // Sprite VAO uses the same (pos.xy, uv.xy) layout as the tile mesh.
+        _spriteVao = GL.GenVertexArray();
+        _spriteVbo = GL.GenBuffer();
+        GL.BindVertexArray(_spriteVao);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, _spriteVbo);
+        GL.EnableVertexAttribArray(0);
+        GL.VertexAttribPointer(0, 2, VertexAttribPointerType.Float, false, 16, 0);
+        GL.EnableVertexAttribArray(1);
+        GL.VertexAttribPointer(1, 2, VertexAttribPointerType.Float, false, 16, 8);
+
         _atlasTex = GL.GenTexture();
     }
 
     public void SetMap(CmpMap map, G24StyleData style)
     {
         _map = map;
+        _style = style;
         _atlas = TileAtlas.Build(style);
+
+        _spriteCache?.Dispose();
+        _spriteCache = new SpriteCache(style);
 
         AtlasTexture.Upload(_atlasTex, _atlas);
         RebuildMesh();
@@ -174,19 +192,9 @@ public sealed class MapView2D : IMapView
 
         if (_map is not null)
         {
-            float ts = GameConfig.TileSize;
-            foreach (var o in _map.Objects)
-            {
-                float fx = o.X / ts;
-                float fy = o.Y / ts;
-                AddQuad(verts, fx - 0.25f, fy - 0.25f, fx + 0.25f, fy + 0.25f, 0.2f, 1f, 0.4f, 1f);
-            }
-            foreach (var c in _map.CarPositions)
-            {
-                float fx = c.X / ts;
-                float fy = c.Y / ts;
-                AddQuad(verts, fx - 0.35f, fy - 0.18f, fx + 0.35f, fy + 0.18f, 1f, 0.3f, 0.3f, 1f);
-            }
+            // Objects and cars are drawn as actual sprites in RenderEntitySprites();
+            // only spawn locations need a coloured marker because no sprite is assigned
+            // to them by the engine.
             foreach (var sp in _map.SpawnLocations)
             {
                 float fx = sp.X + 0.5f;
@@ -263,6 +271,11 @@ public sealed class MapView2D : IMapView
             GL.DrawArrays(PrimitiveType.Triangles, 0, _tileVertexCount);
         }
 
+        // Entity sprites (cars, then objects). One draw per entity since each
+        // sprite has its own texture; counts are bounded by map content so this
+        // stays comfortably fast for editing.
+        RenderEntitySprites(proj);
+
         RebuildOverlay();
         if (_overlayVertexCount > 0)
         {
@@ -271,6 +284,76 @@ public sealed class MapView2D : IMapView
             GL.BindVertexArray(_overlayVao);
             GL.DrawArrays(PrimitiveType.Triangles, 0, _overlayVertexCount);
         }
+    }
+
+    private void RenderEntitySprites(Matrix4 proj)
+    {
+        if (_map is null || _spriteCache is null || _style is null) return;
+
+        _tileShader.Use();
+        GL.UniformMatrix4(_tileShader.GetUniform("uProj"), false, ref proj);
+        GL.ActiveTexture(TextureUnit.Texture0);
+        GL.Uniform1(_tileShader.GetUniform("uTex"), 0);
+        GL.BindVertexArray(_spriteVao);
+
+        // Cars first so objects appear on top of them when overlapping
+        // (matches in-engine z-order for parking lots / props on roads).
+        foreach (var car in _map.CarPositions)
+        {
+            if (car.Type >= _style.Cars.Count) continue;
+            int spriteIdx = SpriteRenderer.GetCarSpriteIndex(_style, _style.Cars[car.Type]);
+            DrawEntitySprite(spriteIdx, car.X, car.Y, car.Rotation);
+        }
+        foreach (var obj in _map.Objects)
+        {
+            if (obj.Type >= _style.Objects.Count) continue;
+            int spriteIdx = _style.Objects[obj.Type].BaseSprite;
+            DrawEntitySprite(spriteIdx, obj.X, obj.Y, obj.Rotation);
+        }
+    }
+
+    /// <summary>
+    /// Draw one sprite as a rotated, world-space-anchored quad centered on
+    /// (worldX, worldY). Sprite pixels translate 1:1 to game pixels, so a
+    /// 32×64 car sprite covers half a tile by one tile.
+    /// </summary>
+    private void DrawEntitySprite(int spriteIndex, ushort worldX, ushort worldY, ushort rotation)
+    {
+        var sprite = _spriteCache!.Get(spriteIndex);
+        if (sprite is null) return;
+
+        float ts = GameConfig.TileSize;
+        float cx = worldX / ts;
+        float cy = worldY / ts;
+        float halfW = sprite.Value.Width  * 0.5f / ts;
+        float halfH = sprite.Value.Height * 0.5f / ts;
+
+        // CMP rotation is a 10-bit fixed-point heading (0..1023 = full turn).
+        float angle = rotation * MathF.Tau / 1024f;
+        float cos = MathF.Cos(angle);
+        float sin = MathF.Sin(angle);
+
+        // Local-space corner offsets, rotated around the entity center.
+        (float x, float y) Rot(float dx, float dy) =>
+            (cx + dx * cos - dy * sin, cy + dx * sin + dy * cos);
+
+        var (x0, y0) = Rot(-halfW, -halfH);
+        var (x1, y1) = Rot( halfW, -halfH);
+        var (x2, y2) = Rot( halfW,  halfH);
+        var (x3, y3) = Rot(-halfW,  halfH);
+
+        var v = _spriteScratch;
+        v[ 0] = x0; v[ 1] = y0; v[ 2] = 0; v[ 3] = 0;
+        v[ 4] = x1; v[ 5] = y1; v[ 6] = 1; v[ 7] = 0;
+        v[ 8] = x2; v[ 9] = y2; v[10] = 1; v[11] = 1;
+        v[12] = x0; v[13] = y0; v[14] = 0; v[15] = 0;
+        v[16] = x2; v[17] = y2; v[18] = 1; v[19] = 1;
+        v[20] = x3; v[21] = y3; v[22] = 0; v[23] = 1;
+
+        GL.BindTexture(TextureTarget.Texture2D, sprite.Value.Texture);
+        GL.BindBuffer(BufferTarget.ArrayBuffer, _spriteVbo);
+        GL.BufferData(BufferTarget.ArrayBuffer, v.Length * sizeof(float), v, BufferUsageHint.DynamicDraw);
+        GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
     }
 
     public void Resize(int width, int height)
@@ -311,7 +394,7 @@ public sealed class MapView2D : IMapView
 
     public void ResetView()
     {
-        PixelsPerTile = 16f;
+        PixelsPerTile = 32f;
         CameraWorld = new Vector2(GameConfig.MapWidth / 2f, GameConfig.MapHeight / 2f);
     }
 
@@ -332,12 +415,15 @@ public sealed class MapView2D : IMapView
 
     public void Dispose()
     {
+        _spriteCache?.Dispose();
         _tileShader.Dispose();
         _overlayShader.Dispose();
         GL.DeleteBuffer(_tileVbo);
         GL.DeleteBuffer(_overlayVbo);
+        GL.DeleteBuffer(_spriteVbo);
         GL.DeleteVertexArray(_tileVao);
         GL.DeleteVertexArray(_overlayVao);
+        GL.DeleteVertexArray(_spriteVao);
         GL.DeleteTexture(_atlasTex);
     }
 
