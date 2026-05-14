@@ -45,6 +45,12 @@ public sealed class MapView3D : IMapView
     private CmpMap? _map;
 
     public Vector3 Eye { get; set; } = new(GameConfig.MapWidth / 2f, GameConfig.MapHeight / 2f + 50f, 30f);
+
+    public Vector2 CameraWorld
+    {
+        get => new(Eye.X, Eye.Y);
+        set => Eye = new Vector3(value.X, value.Y, Eye.Z);
+    }
     /// <summary>Heading in radians (around Z, 0 = looking along +X).</summary>
     public float Yaw { get; set; } = -MathF.PI / 2f;
     /// <summary>Pitch in radians (around camera's right axis, 0 = horizontal, negative looks down).</summary>

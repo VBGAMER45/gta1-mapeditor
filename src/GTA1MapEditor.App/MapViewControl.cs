@@ -30,6 +30,12 @@ public sealed class MapViewControl : GLControl
     public event Action<MapObject>? ObjectEditRequested;
     public event Action<CarPosition>? CarEditRequested;
 
+    /// <summary>Fired when the active renderer's camera moves or zooms — scrollbars use this to follow along.</summary>
+    public event Action? CameraChanged;
+
+    /// <summary>Re-entrancy guard so programmatic camera updates (from scrollbars) don't recurse.</summary>
+    private bool _suppressCameraEvent;
+
     private readonly System.Windows.Forms.Timer _flyTimer = new() { Interval = 16 };
     private readonly HashSet<Keys> _heldKeys = new();
     private DateTime _lastTick = DateTime.UtcNow;
@@ -62,11 +68,27 @@ public sealed class MapViewControl : GLControl
 
     public IMapView? View => _view;
 
-    public void ZoomIn()    { _view?.Zoom(1.25f, ClientSize.Width / 2, ClientSize.Height / 2); Invalidate(); }
-    public void ZoomOut()   { _view?.Zoom(1f / 1.25f, ClientSize.Width / 2, ClientSize.Height / 2); Invalidate(); }
-    public void ResetZoom() { _view?.ResetView(); Invalidate(); }
-    public void NativeZoom(){ _view?.NativeZoom(); Invalidate(); }
-    public void FitMap()    { _view?.FitMap(); Invalidate(); }
+    public void ZoomIn()    { _view?.Zoom(1.25f, ClientSize.Width / 2, ClientSize.Height / 2); RaiseCamera(); Invalidate(); }
+    public void ZoomOut()   { _view?.Zoom(1f / 1.25f, ClientSize.Width / 2, ClientSize.Height / 2); RaiseCamera(); Invalidate(); }
+    public void ResetZoom() { _view?.ResetView(); RaiseCamera(); Invalidate(); }
+    public void NativeZoom(){ _view?.NativeZoom(); RaiseCamera(); Invalidate(); }
+    public void FitMap()    { _view?.FitMap(); RaiseCamera(); Invalidate(); }
+
+    /// <summary>Programmatically move the camera (e.g., from scrollbars or Go-to-tile) without triggering CameraChanged.</summary>
+    public void SetCameraWorld(float worldX, float worldY)
+    {
+        if (_view is null) return;
+        _suppressCameraEvent = true;
+        try { _view.CameraWorld = new OpenTK.Mathematics.Vector2(worldX, worldY); }
+        finally { _suppressCameraEvent = false; }
+        Invalidate();
+    }
+
+    private void RaiseCamera()
+    {
+        if (_suppressCameraEvent) return;
+        CameraChanged?.Invoke();
+    }
 
     // ─── Renderer lifecycle ───────────────────────────────────────────────
 
@@ -367,6 +389,7 @@ public sealed class MapViewControl : GLControl
             int dy = e.Y - _lastDragPoint.Y;
             _view.Pan(dx, dy);
             _lastDragPoint = e.Location;
+            RaiseCamera();
             Invalidate();
         }
 
@@ -423,6 +446,7 @@ public sealed class MapViewControl : GLControl
         if (_view is null) return;
         float factor = e.Delta > 0 ? 1.25f : 1f / 1.25f;
         _view.Zoom(factor, e.X, e.Y);
+        RaiseCamera();
         Invalidate();
     }
 
@@ -430,7 +454,7 @@ public sealed class MapViewControl : GLControl
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
-        if (_view?.UsesFlyCamera == true) _heldKeys.Add(e.KeyCode);
+        if (_view?.UsesFlyCamera == true) { _heldKeys.Add(e.KeyCode); RaiseCamera(); }
     }
 
     protected override void OnKeyUp(KeyEventArgs e)
@@ -463,6 +487,7 @@ public sealed class MapViewControl : GLControl
         if (fwd || back || left || right || up || down)
         {
             _view.Tick(dt, fwd, back, left, right, up, down);
+            RaiseCamera();
             Invalidate();
         }
     }

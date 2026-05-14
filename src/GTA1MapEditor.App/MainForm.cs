@@ -26,6 +26,10 @@ public sealed class MainForm : Form
 
     private TileAttributesForm? _attributesForm;
     private readonly MapListsPanel _listsPanel;
+    private readonly Panel _viewContainer = new() { Dock = DockStyle.Fill };
+    private readonly HScrollBar _hScroll = new() { Dock = DockStyle.Bottom };
+    private readonly VScrollBar _vScroll = new() { Dock = DockStyle.Right };
+    private ToolStripMenuItem _recentMenu = null!;
 
     public MainForm()
     {
@@ -37,6 +41,15 @@ public sealed class MainForm : Form
         _viewControl = new MapViewControl(_state);
         _listsPanel = new MapListsPanel(_state, () => _viewControl.View as MapView2D);
 
+        // Map viewport with horizontal + vertical scrollbars. The MapViewControl
+        // fills the remaining space inside the container after the scrollbars
+        // dock. Order matters: scrollbars must be added first so they get
+        // their dock space allocated before the fill-docked view.
+        _viewContainer.Controls.Add(_viewControl);
+        _viewContainer.Controls.Add(_hScroll);
+        _viewContainer.Controls.Add(_vScroll);
+        ConfigureScrollbars();
+
         MainMenuStrip = BuildMenu();
         var toolbar = BuildToolbar();
 
@@ -44,7 +57,7 @@ public sealed class MainForm : Form
         _statusStrip.Items.Add(_toolLabel);
         _statusStrip.Items.Add(_hoverLabel);
 
-        Controls.Add(_viewControl);
+        Controls.Add(_viewContainer);
         Controls.Add(_listsPanel);
         Controls.Add(toolbar);
         Controls.Add(MainMenuStrip);
@@ -53,12 +66,16 @@ public sealed class MainForm : Form
         _viewControl.HoveredTileChanged += OnHovered;
         _viewControl.ObjectEditRequested += OpenObjectInstanceEditor;
         _viewControl.CarEditRequested += OpenCarInstanceEditor;
-        _state.MapLoaded += () => { UpdateMapLabel(); UpdateCommandUi(); };
+        _viewControl.CameraChanged += SyncScrollbars;
+        _state.MapLoaded += () => { UpdateMapLabel(); UpdateCommandUi(); SyncScrollbars(); RebuildRecentMenu(); };
+        _state.ViewModeChanged += () => { UpdateViewModeUi(); SyncScrollbars(); UpdateScrollbarVisibility(); };
         _state.MapEdited += UpdateMapLabel;
         _state.CommandsChanged += UpdateCommandUi;
         _state.ToolChanged += OnToolChanged;
-        _state.ViewModeChanged += UpdateViewModeUi;
         _state.OverlaysChanged += UpdateOverlayUi;
+        _viewControl.Resize += (_, _) => SyncScrollbars();
+
+        RebuildRecentMenu();
 
         FormClosing += OnFormClosing;
         KeyPreview = true;
@@ -74,6 +91,9 @@ public sealed class MainForm : Form
         file.DropDownItems.Add(MakeItem("&Save", Keys.Control | Keys.S, OnSave));
         file.DropDownItems.Add(MakeItem("Save &As…", Keys.Control | Keys.Shift | Keys.S, OnSaveAs));
         file.DropDownItems.Add(new ToolStripSeparator());
+        _recentMenu = new ToolStripMenuItem("Open &Recent");
+        file.DropDownItems.Add(_recentMenu);
+        file.DropDownItems.Add(new ToolStripSeparator());
         file.DropDownItems.Add(MakeItem("E&xit", Keys.Alt | Keys.F4, (_, _) => Close()));
 
         var edit = new ToolStripMenuItem("&Edit");
@@ -81,6 +101,8 @@ public sealed class MainForm : Form
         _redoItem = MakeItem("&Redo", Keys.Control | Keys.Y, (_, _) => _state.Redo());
         edit.DropDownItems.Add(_undoItem);
         edit.DropDownItems.Add(_redoItem);
+        edit.DropDownItems.Add(new ToolStripSeparator());
+        edit.DropDownItems.Add(MakeItem("&Go to Tile…", Keys.Control | Keys.G, (_, _) => OpenGoToTile()));
 
         var view = new ToolStripMenuItem("&View");
         view.DropDownItems.Add(MakeItem("Zoom &In", Keys.Control | Keys.Oemplus, (_, _) => _viewControl.ZoomIn()));
@@ -209,11 +231,16 @@ public sealed class MainForm : Form
             Title = "Open GTA1 .CMP",
         };
         if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        OpenMapFile(dlg.FileName);
+    }
 
+    /// <summary>Common load path used by both File>Open and the recent files submenu.</summary>
+    private void OpenMapFile(string path)
+    {
         try
         {
-            var cmp = CmpReader.ReadFile(dlg.FileName);
-            var stylePath = LocateStyleFor(dlg.FileName, cmp.Header.StyleNumber);
+            var cmp = CmpReader.ReadFile(path);
+            var stylePath = LocateStyleFor(path, cmp.Header.StyleNumber);
             if (stylePath is null)
             {
                 MessageBox.Show(this,
@@ -223,13 +250,120 @@ public sealed class MainForm : Form
                 return;
             }
             var style = G24Reader.ReadFile(stylePath);
-            _state.LoadMap(cmp, style, dlg.FileName);
+            _state.LoadMap(cmp, style, path);
+            RecentFiles.Add(path);
+            RebuildRecentMenu();
         }
         catch (Exception ex)
         {
             MessageBox.Show(this, ex.ToString(), "Failed to open map",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
+    }
+
+    private void RebuildRecentMenu()
+    {
+        _recentMenu.DropDownItems.Clear();
+        var list = RecentFiles.Load();
+        if (list.Count == 0)
+        {
+            var empty = new ToolStripMenuItem("(none)") { Enabled = false };
+            _recentMenu.DropDownItems.Add(empty);
+            return;
+        }
+        for (int i = 0; i < list.Count; i++)
+        {
+            string path = list[i];
+            string text = $"&{i + 1}  {Path.GetFileName(path)}";
+            var item = new ToolStripMenuItem(text) { ToolTipText = path };
+            item.Click += (_, _) => { if (ConfirmDiscardChanges()) OpenMapFile(path); };
+            _recentMenu.DropDownItems.Add(item);
+        }
+        _recentMenu.DropDownItems.Add(new ToolStripSeparator());
+        var clear = new ToolStripMenuItem("Clear list");
+        clear.Click += (_, _) => { RecentFiles.Save(new List<string>()); RebuildRecentMenu(); };
+        _recentMenu.DropDownItems.Add(clear);
+    }
+
+    private void OpenGoToTile()
+    {
+        if (_state.Map is null) return;
+        int initialX = _state.Selection?.X ?? 128;
+        int initialY = _state.Selection?.Y ?? 128;
+        using var dlg = new GoToTileForm(initialX, initialY);
+        if (dlg.ShowDialog(this) != DialogResult.OK) return;
+        _viewControl.SetCameraWorld(dlg.X + 0.5f, dlg.Y + 0.5f);
+        _state.SetSelection(new TileSelection(dlg.X, dlg.Y, 0));
+        SyncScrollbars();
+    }
+
+    // ─── Scrollbar plumbing ────────────────────────────────────────────────
+
+    private bool _syncingScrollbars;
+
+    private void ConfigureScrollbars()
+    {
+        _hScroll.Minimum = 0;
+        _hScroll.Maximum = GameConfig.MapWidth;
+        _vScroll.Minimum = 0;
+        _vScroll.Maximum = GameConfig.MapHeight;
+        _hScroll.Scroll += (_, _) => OnScroll();
+        _vScroll.Scroll += (_, _) => OnScroll();
+    }
+
+    private void OnScroll()
+    {
+        if (_syncingScrollbars || _viewControl.View is null) return;
+        var view = _viewControl.View;
+        if (view is MapView3D) return; // 3D fly cam ignores scrollbars
+        // Scrollbar value represents the left/top of the visible region.
+        // Camera is centered, so add half-viewport to get camera position.
+        float halfW = HalfVisibleTilesX();
+        float halfH = HalfVisibleTilesY();
+        _viewControl.SetCameraWorld(_hScroll.Value + halfW, _vScroll.Value + halfH);
+    }
+
+    private void SyncScrollbars()
+    {
+        if (_viewControl.View is null || _viewControl.View is MapView3D) return;
+        var cam = _viewControl.View.CameraWorld;
+        float halfW = HalfVisibleTilesX();
+        float halfH = HalfVisibleTilesY();
+        _syncingScrollbars = true;
+        try
+        {
+            // Configure thumb size (LargeChange) and clamp value into valid range.
+            int largeH = Math.Max(1, (int)Math.Ceiling(halfW * 2));
+            int largeV = Math.Max(1, (int)Math.Ceiling(halfH * 2));
+            _hScroll.LargeChange = largeH;
+            _vScroll.LargeChange = largeV;
+            _hScroll.Maximum = GameConfig.MapWidth + largeH - 1;
+            _vScroll.Maximum = GameConfig.MapHeight + largeV - 1;
+            _hScroll.Value = Math.Clamp((int)(cam.X - halfW), _hScroll.Minimum, _hScroll.Maximum - _hScroll.LargeChange + 1);
+            _vScroll.Value = Math.Clamp((int)(cam.Y - halfH), _vScroll.Minimum, _vScroll.Maximum - _vScroll.LargeChange + 1);
+        }
+        finally { _syncingScrollbars = false; }
+    }
+
+    private void UpdateScrollbarVisibility()
+    {
+        bool show3D = _state.View != ViewMode.Perspective3D;
+        _hScroll.Visible = show3D;
+        _vScroll.Visible = show3D;
+    }
+
+    private float HalfVisibleTilesX()
+    {
+        if (_viewControl.View is MapView2D v2) return _viewControl.ClientSize.Width * 0.5f / v2.PixelsPerTile;
+        if (_viewControl.View is MapViewIso vi) return vi.OrthoSize * (_viewControl.ClientSize.Width / Math.Max(_viewControl.ClientSize.Height, 1f));
+        return GameConfig.MapWidth * 0.5f;
+    }
+
+    private float HalfVisibleTilesY()
+    {
+        if (_viewControl.View is MapView2D v2) return _viewControl.ClientSize.Height * 0.5f / v2.PixelsPerTile;
+        if (_viewControl.View is MapViewIso vi) return vi.OrthoSize;
+        return GameConfig.MapHeight * 0.5f;
     }
 
     private void OnSave(object? sender, EventArgs e)

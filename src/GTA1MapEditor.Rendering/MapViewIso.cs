@@ -49,6 +49,12 @@ public sealed class MapViewIso : IMapView
     // Camera state
     public Vector3 Target { get; set; } = new(GameConfig.MapWidth / 2f, GameConfig.MapHeight / 2f, 0f);
 
+    public Vector2 CameraWorld
+    {
+        get => new(Target.X, Target.Y);
+        set => Target = new Vector3(value.X, value.Y, Target.Z);
+    }
+
     /// <summary>Half-height of the orthographic frustum in world units. Smaller = more zoomed-in.</summary>
     public float OrthoSize { get; set; } = 64f;
 

@@ -1,4 +1,5 @@
 using GTA1MapEditor.Core.Models;
+using OpenTK.Mathematics;
 
 namespace GTA1MapEditor.Rendering;
 
@@ -15,6 +16,14 @@ public interface IMapView : IDisposable
     void Resize(int width, int height);
 
     (int x, int y, int z)? Selection { get; set; }
+
+    /// <summary>
+    /// Camera focus point in world (tile) coordinates. For top-down this is
+    /// the orthographic center; for iso it's the look-at target; for 3D it's
+    /// projected to the ground plane and may behave loosely (fly-cam doesn't
+    /// pan in tile-space anyway).
+    /// </summary>
+    Vector2 CameraWorld { get; set; }
 
     /// <summary>Pan by a screen-space delta (in pixels). 3D views interpret as strafe.</summary>
     void Pan(float screenDx, float screenDy);
