@@ -256,17 +256,23 @@ public sealed class MapView2D : IMapView
     private void EmitTrafficArrows(List<float> verts)
     {
         if (_map is null) return;
-        const float r = 0.18f;  // arrow size in tiles
-        const float thick = 0.05f;
+
+        // Arrow geometry (in tile units, all measured from tile centre):
+        //   shaft = thin rectangle from centre to the arrowhead base
+        //   head  = triangle from the base to the tip
+        const float tip       = 0.42f; // distance from centre to arrow tip
+        const float shaftLen  = 0.22f; // distance from centre to arrowhead base
+        const float shaftHalf = 0.06f; // shaft half-thickness
+        const float headHalf  = 0.16f; // arrowhead half-width
+
+        // Bright pale cyan reads cleanly over grey road, green grass, and dark asphalt.
+        const float aR = 0.7f, aG = 1.0f, aB = 1.0f, aA = 0.95f;
+
         for (int y = 0; y < GameConfig.MapHeight; y++)
         for (int x = 0; x < GameConfig.MapWidth; x++)
         {
-            // Scan the column for any block that has nav flags — not just the
-            // topmost lid. Above a road there's usually an AIR or BUILDING
-            // block (overpass / elevated rail), so filtering the topmost
-            // block to Road/Pavement was hiding every tile's flags. Walk the
-            // full stack and OR the flags from any Road/Pavement block — gives
-            // the visible nav direction for the drivable layer underneath.
+            // Walk the column and OR nav flags from every Road/Pavement block —
+            // the drivable layer often sits below an AIR or BUILDING (overpass).
             var stack = _map.GetBlockStack(x, y);
             bool up = false, down = false, left = false, right = false;
             foreach (var b in stack)
@@ -280,10 +286,31 @@ public sealed class MapView2D : IMapView
             if (!(up || down || left || right)) continue;
 
             float cx = x + 0.5f, cy = y + 0.5f;
-            if (up)    AddQuad(verts, cx - thick, cy - r,    cx + thick, cy,        0.2f, 0.9f, 1f, 0.9f);
-            if (down)  AddQuad(verts, cx - thick, cy,        cx + thick, cy + r,    0.2f, 0.9f, 1f, 0.9f);
-            if (left)  AddQuad(verts, cx - r,     cy - thick, cx,         cy + thick, 0.2f, 0.9f, 1f, 0.9f);
-            if (right) AddQuad(verts, cx,         cy - thick, cx + r,     cy + thick, 0.2f, 0.9f, 1f, 0.9f);
+
+            // UP = north (toward -Y, top of screen)
+            if (up)
+            {
+                AddQuad(verts, cx - shaftHalf, cy - shaftLen, cx + shaftHalf, cy, aR, aG, aB, aA);
+                AddTri(verts, cx - headHalf, cy - shaftLen, cx + headHalf, cy - shaftLen, cx, cy - tip, aR, aG, aB, aA);
+            }
+            // DOWN = south (toward +Y)
+            if (down)
+            {
+                AddQuad(verts, cx - shaftHalf, cy, cx + shaftHalf, cy + shaftLen, aR, aG, aB, aA);
+                AddTri(verts, cx + headHalf, cy + shaftLen, cx - headHalf, cy + shaftLen, cx, cy + tip, aR, aG, aB, aA);
+            }
+            // LEFT = west (toward -X)
+            if (left)
+            {
+                AddQuad(verts, cx - shaftLen, cy - shaftHalf, cx, cy + shaftHalf, aR, aG, aB, aA);
+                AddTri(verts, cx - shaftLen, cy + headHalf, cx - shaftLen, cy - headHalf, cx - tip, cy, aR, aG, aB, aA);
+            }
+            // RIGHT = east (toward +X)
+            if (right)
+            {
+                AddQuad(verts, cx, cy - shaftHalf, cx + shaftLen, cy + shaftHalf, aR, aG, aB, aA);
+                AddTri(verts, cx + shaftLen, cy - headHalf, cx + shaftLen, cy + headHalf, cx + tip, cy, aR, aG, aB, aA);
+            }
         }
     }
 
@@ -485,6 +512,13 @@ public sealed class MapView2D : IMapView
         void V(float x, float y) { buf.Add(x); buf.Add(y); buf.Add(r); buf.Add(g); buf.Add(b); buf.Add(a); }
         V(x0, y0); V(x1, y0); V(x1, y1);
         V(x0, y0); V(x1, y1); V(x0, y1);
+    }
+
+    private static void AddTri(List<float> buf, float x0, float y0, float x1, float y1, float x2, float y2,
+        float r, float g, float b, float a)
+    {
+        void V(float x, float y) { buf.Add(x); buf.Add(y); buf.Add(r); buf.Add(g); buf.Add(b); buf.Add(a); }
+        V(x0, y0); V(x1, y1); V(x2, y2);
     }
 
     private static BlockInfo? FindTopLid(CmpMap map, int x, int y)
