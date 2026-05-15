@@ -62,6 +62,16 @@ public sealed class MapViewControl : GLControl
             if (_view is MapView2D v2) v2.ShowTrafficArrows = _state.ShowTrafficArrows;
             Invalidate();
         };
+        _state.MapEdited += () =>
+        {
+            // ShowGroundLevel changes need a mesh rebuild since the tile mesh
+            // is baked, not picked per frame.
+            if (_view is MapView2D v2 && v2.ShowGroundLevel != _state.ShowGroundLevel)
+            {
+                v2.ShowGroundLevel = _state.ShowGroundLevel;
+                v2.RebuildMesh();
+            }
+        };
 
         _flyTimer.Tick += OnFlyTick;
     }
@@ -129,7 +139,16 @@ public sealed class MapViewControl : GLControl
         _view.SetMap(_state.Map, _state.Style);
         _view.Resize(ClientSize.Width, ClientSize.Height);
         _view.Selection = _state.Selection is { } sel ? (sel.X, sel.Y, sel.Z) : null;
-        if (_view is MapView2D v2) v2.ShowTrafficArrows = _state.ShowTrafficArrows;
+        if (_view is MapView2D v2)
+        {
+            v2.ShowTrafficArrows = _state.ShowTrafficArrows;
+            // Apply the user's ground/top preference before the first render.
+            if (v2.ShowGroundLevel != _state.ShowGroundLevel)
+            {
+                v2.ShowGroundLevel = _state.ShowGroundLevel;
+                v2.RebuildMesh();
+            }
+        }
         Invalidate();
     }
 

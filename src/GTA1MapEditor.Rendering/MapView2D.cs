@@ -88,6 +88,15 @@ public sealed class MapView2D : IMapView
     /// <summary>Render traffic-direction arrows on each block flagged as walkable/drivable.</summary>
     public bool ShowTrafficArrows { get; set; }
 
+    /// <summary>
+    /// When true (default), each tile renders the ground block the player
+    /// would walk on — same heuristic Junction25 uses (skips decorative
+    /// under-ground overlays, water hidden under a bridge deck, and
+    /// pillars holding up an elevated road). When false, renders the
+    /// topmost lid in the column (shows building rooftops + elevated rails).
+    /// </summary>
+    public bool ShowGroundLevel { get; set; } = true;
+
     public bool UsesFlyCamera => false;
 
     public MapView2D()
@@ -156,7 +165,7 @@ public sealed class MapView2D : IMapView
         for (int y = 0; y < GameConfig.MapHeight; y++)
         for (int x = 0; x < GameConfig.MapWidth; x++)
         {
-            var top = FindTopLid(_map, x, y);
+            var top = ShowGroundLevel ? FindGroundLid(_map, x, y) : FindTopLid(_map, x, y);
             if (top is null) continue;
             int lidByte = top.Lid;
             if (lidByte == 0) continue;
@@ -461,5 +470,70 @@ public sealed class MapView2D : IMapView
         for (int i = stack.Count - 1; i >= 0; i--)
             if (stack[i].Lid != 0) return stack[i];
         return stack.Count > 0 ? stack[^1] : null;
+    }
+
+    /// <summary>
+    /// Pick the block the player would actually walk on at this tile. Walks
+    /// the column bottom-up, skipping AIR, decorative under-ground overlays,
+    /// water hidden beneath a bridge deck, and pillars supporting an
+    /// elevated road. Falls through to FindTopLid if no ground block resolves.
+    /// Same approach as the web project's getGroundBlock in CMPParser.ts.
+    /// </summary>
+    private static BlockInfo? FindGroundLid(CmpMap map, int x, int y)
+    {
+        var stack = map.GetBlockStack(x, y);
+        for (int i = 0; i < stack.Count; i++)
+        {
+            var b = stack[i];
+            if (b.BlockType == BlockType.Air) continue;
+            if (IsDecorativeBuildingAt(stack, i)) continue;
+            if (IsUnderBridgeWater(stack, i)) continue;
+            if (IsUnderElevatedRoad(stack, i)) continue;
+            if (b.Lid != 0) return b;
+        }
+        return FindTopLid(map, x, y);
+    }
+
+    /// <summary>BUILDING with no walls and a terrain block above — a lid texture painted under the ground (road arrows, etc.).</summary>
+    private static bool IsDecorativeBuildingAt(List<BlockInfo> stack, int i)
+    {
+        var b = stack[i];
+        if (b.BlockType != BlockType.Building) return false;
+        if (b.Left != 0 || b.Right != 0 || b.Top != 0 || b.Bottom != 0) return false;
+        for (int j = i + 1; j < stack.Count; j++)
+        {
+            var t = stack[j].BlockType;
+            if (t == BlockType.Air) continue;
+            return t == BlockType.Road || t == BlockType.Pavement || t == BlockType.Field;
+        }
+        return false;
+    }
+
+    /// <summary>WATER with a road/pavement/field block above — the player is on a bridge over the water.</summary>
+    private static bool IsUnderBridgeWater(List<BlockInfo> stack, int i)
+    {
+        if (stack[i].BlockType != BlockType.Water) return false;
+        for (int j = i + 1; j < stack.Count; j++)
+        {
+            var t = stack[j].BlockType;
+            if (t == BlockType.Air) continue;
+            return t == BlockType.Road || t == BlockType.Pavement || t == BlockType.Field;
+        }
+        return false;
+    }
+
+    /// <summary>BUILDING with a ROAD eventually above through AIR/BUILDING/PAVEMENT — a pillar supporting an elevated road.</summary>
+    private static bool IsUnderElevatedRoad(List<BlockInfo> stack, int i)
+    {
+        if (stack[i].BlockType != BlockType.Building) return false;
+        for (int j = i + 1; j < stack.Count; j++)
+        {
+            var t = stack[j].BlockType;
+            if (t == BlockType.Air) continue;
+            if (t == BlockType.Building) continue;
+            if (t == BlockType.Pavement) continue;
+            return t == BlockType.Road;
+        }
+        return false;
     }
 }

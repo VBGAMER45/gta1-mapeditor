@@ -76,6 +76,9 @@ public sealed class EditorState
     /// <summary>If true, MapView2D draws nav-flag arrows on every drivable tile.</summary>
     public bool ShowTrafficArrows { get; set; }
 
+    /// <summary>If true (default), top-down view renders the player's ground level (skips elevated rails/highways). False renders the topmost lid in each column.</summary>
+    public bool ShowGroundLevel { get; set; } = true;
+
     public CommandStack Commands { get; } = new();
 
     public bool IsDirty => Editor?.IsDirty ?? false;
@@ -147,6 +150,12 @@ public sealed class EditorState
     {
         ShowTrafficArrows = !ShowTrafficArrows;
         OverlaysChanged?.Invoke();
+    }
+
+    public void ToggleGroundLevel()
+    {
+        ShowGroundLevel = !ShowGroundLevel;
+        MapEdited?.Invoke(); // re-renderer + rebuild mesh
     }
 
     public void ExecuteCommand(IEditCommand cmd)

@@ -121,6 +121,10 @@ public sealed class MainForm : Form
         view.DropDownItems.Add(new ToolStripSeparator());
         _trafficArrowsItem = MakeItem("Traffic &arrows overlay", Keys.F2, (_, _) => _state.ToggleTrafficArrows());
         view.DropDownItems.Add(_trafficArrowsItem);
+        var groundItem = MakeItem("&Ground level (vs top of stack)", Keys.F3, (_, _) => _state.ToggleGroundLevel());
+        groundItem.Checked = _state.ShowGroundLevel;
+        _state.MapEdited += () => groundItem.Checked = _state.ShowGroundLevel;
+        view.DropDownItems.Add(groundItem);
         view.DropDownItems.Add(new ToolStripSeparator());
         view.DropDownItems.Add(MakeItem("Tile &Attributes…", Keys.F4, (_, _) => OpenAttributesPanel()));
 
