@@ -126,23 +126,30 @@ public static class G24Reader
 
     private static List<G24ObjectInfo> ReadObjectInfo(ReadOnlySpan<byte> span, G24Header h, G24SectionOffsets o)
     {
+        // Per Carnage3D StyleData.cpp:714-744, the G24 object_info record is
+        //   SI32 width, SI32 height, SI32 depth, I16 baseSprite, I16 weight,
+        //   I16 aux, I8 status, I8 numInto, then numInto * UI16 into[].
+        // Width/height/depth are 32-bit, NOT 16-bit. Reading them as 16-bit
+        // shifted every subsequent field by 6 bytes — BaseSprite was reading
+        // the high half of Height, so every object rendered the same wrong
+        // sprite.
         var result = new List<G24ObjectInfo>();
         int pos = o.ObjectInfo;
         int end = pos + (int)h.ObjectInfoSize;
-        while (pos + 14 <= end)
+        while (pos + 20 <= end)
         {
             var obj = new G24ObjectInfo
             {
-                Width = BinaryPrimitives.ReadInt16LittleEndian(span[pos..]),
-                Height = BinaryPrimitives.ReadInt16LittleEndian(span[(pos + 2)..]),
-                Depth = BinaryPrimitives.ReadInt16LittleEndian(span[(pos + 4)..]),
-                BaseSprite = BinaryPrimitives.ReadUInt16LittleEndian(span[(pos + 6)..]),
-                Weight = BinaryPrimitives.ReadUInt16LittleEndian(span[(pos + 8)..]),
-                Aux = BinaryPrimitives.ReadUInt16LittleEndian(span[(pos + 10)..]),
-                Status = (sbyte)span[pos + 12],
-                NumInto = span[pos + 13],
+                Width  = BinaryPrimitives.ReadInt32LittleEndian(span[pos..]),
+                Height = BinaryPrimitives.ReadInt32LittleEndian(span[(pos + 4)..]),
+                Depth  = BinaryPrimitives.ReadInt32LittleEndian(span[(pos + 8)..]),
+                BaseSprite = BinaryPrimitives.ReadUInt16LittleEndian(span[(pos + 12)..]),
+                Weight = BinaryPrimitives.ReadUInt16LittleEndian(span[(pos + 14)..]),
+                Aux = BinaryPrimitives.ReadUInt16LittleEndian(span[(pos + 16)..]),
+                Status = (sbyte)span[pos + 18],
+                NumInto = span[pos + 19],
             };
-            pos += 14;
+            pos += 20;
             for (int i = 0; i < obj.NumInto && pos + 2 <= end; i++)
             {
                 obj.Into.Add(BinaryPrimitives.ReadUInt16LittleEndian(span[pos..]));

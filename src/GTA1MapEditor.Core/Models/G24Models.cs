@@ -58,9 +58,10 @@ public sealed record G24SpriteDelta(ushort Size, uint Offset);
 
 public sealed class G24ObjectInfo
 {
-    public short Width { get; set; }
-    public short Height { get; set; }
-    public short Depth { get; set; }
+    // Per Carnage3D StyleData.cpp:720-722 dimensions are signed 32-bit, not 16-bit.
+    public int Width { get; set; }
+    public int Height { get; set; }
+    public int Depth { get; set; }
     public ushort BaseSprite { get; set; }
     public ushort Weight { get; set; }
     public ushort Aux { get; set; }
