@@ -47,7 +47,16 @@ public sealed class TileAtlas
 
         for (int tile = 1; tile < tileCount; tile++) // tile 0 stays transparent
         {
-            int clutIndex = tile < style.PaletteIndices.Length ? style.PaletteIndices[tile] : 0;
+            // paletteIndices stores 4 CLUT entries per tile — one for each
+            // possible block remap (TypeMapExt bits 4-5). We bake the atlas
+            // at remap=0 (the base palette); per-block remap variations are
+            // a future TODO that would either need 4× atlas variants or a
+            // palette-lookup fragment shader. (Source: Carnage3D
+            // StyleData.cpp:329 — `paletteIndices[4 * tile + remap]`.)
+            int paletteSlot = 4 * tile;
+            int clutIndex = paletteSlot < style.PaletteIndices.Length
+                ? style.PaletteIndices[paletteSlot]
+                : 0;
             int srcBase = tile * TileSize * TileSize;
             int cellX = (tile % Columns) * CellSize;
             int cellY = (tile / Columns) * CellSize;
