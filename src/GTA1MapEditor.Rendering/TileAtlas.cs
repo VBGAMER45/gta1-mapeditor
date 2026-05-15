@@ -50,16 +50,27 @@ public sealed class TileAtlas
                 ? style.PaletteIndices[paletteSlot]
                 : 0;
 
+            // Tile pixels are stored as a 4-tile-wide page, not as flat
+            // consecutive 4096-byte blocks. Each "block row" is 4 tiles ×
+            // 64 rows = 16384 bytes, with each scanline spanning 256 pixels
+            // (4 tiles). See Carnage3D StyleData.cpp:370-382. The 4-row
+            // alignment padding in ComputeOffsets exists for this reason.
+            const int RowStride = 4 * TileSize;            // 256 px per scanline
+            const int BlockRowBytes = TileSize * RowStride; // 64 × 256 = 16384
+            int blockX = tile % 4;
+            int blockY = tile / 4;
+            int tileBase = blockY * BlockRowBytes + blockX * TileSize;
+
             var rgba = new byte[TileSize * TileSize * 4];
-            int srcBase = tile * TileSize * TileSize;
             Span<byte> rgb = stackalloc byte[3];
             var paletteSpan = palette.AsSpan();
 
             for (int py = 0; py < TileSize; py++)
             {
+                int srcRow = tileBase + py * RowStride;
                 for (int px = 0; px < TileSize; px++)
                 {
-                    byte pixel = style.TileData[srcBase + py * TileSize + px];
+                    byte pixel = style.TileData[srcRow + px];
                     int dst = (py * TileSize + px) * 4;
                     if (pixel == 0) { rgba[dst + 3] = 0; continue; }
                     if (Palette.LookupColor(paletteSpan, clutIndex, pixel, rgb))
