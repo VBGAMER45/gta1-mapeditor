@@ -86,7 +86,9 @@ public static class MapMesh
         var ne = new Vector2(u1, v0);
         var se = new Vector2(u1, v1);
         var sw = new Vector2(u0, v1);
-        if (b.FlipLeftRight) { (nw, ne) = (ne, nw); (sw, se) = (se, sw); }
+        // FLIP_LR is side-face-only per Carnage3D — applying it to lids
+        // mirrors corner trim incorrectly. Rotation alone drives lid
+        // orientation. (Web port fix: commit 2893914.)
         for (int r = 0; r < (int)b.Rotation; r++)
             (nw, ne, se, sw) = (sw, nw, ne, se);
 
@@ -113,7 +115,7 @@ public static class MapMesh
         var ne = new Vector2(u1, v0);
         var se = new Vector2(u1, v1);
         var sw = new Vector2(u0, v1);
-        if (b.FlipLeftRight) { (nw, ne) = (ne, nw); (sw, se) = (se, sw); }
+        // FLIP_LR is side-face-only per Carnage3D — see comment in EmitLid.
         for (int r = 0; r < (int)b.Rotation; r++)
             (nw, ne, se, sw) = (sw, nw, ne, se);
 

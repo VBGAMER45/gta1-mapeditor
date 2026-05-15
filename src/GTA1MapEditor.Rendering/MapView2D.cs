@@ -186,7 +186,12 @@ public sealed class MapView2D : IMapView
                 var ne = new Vector2(uv.u1, uv.v0);
                 var se = new Vector2(uv.u1, uv.v1);
                 var sw = new Vector2(uv.u0, uv.v1);
-                if (block.FlipLeftRight) { (nw, ne) = (ne, nw); (sw, se) = (se, sw); }
+                // FLIP_LR is a side-face-only flag per Carnage3D's
+                // GameMapHelpers.cpp (`if (face != eBlockFace_Lid) { ... flip ... }`).
+                // Applying it to lids mirrors corner trim — a building corner with
+                // FLIP_LR set would have its L-shape pointing outward instead of
+                // into the building. Rotation alone drives lid orientation.
+                // (Fixed in the web port: commit 2893914.)
                 for (int r = 0; r < (int)block.Rotation; r++)
                     (nw, ne, se, sw) = (sw, nw, ne, se);
 
