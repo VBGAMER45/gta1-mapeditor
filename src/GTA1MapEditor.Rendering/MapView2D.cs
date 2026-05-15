@@ -157,37 +157,46 @@ public sealed class MapView2D : IMapView
     {
         if (_map is null || _atlas is null || _style is null) { _tileVertexCount = 0; return; }
 
-        // CMP block.Lid is a 1-based index into the LID tile section. The atlas
-        // is laid out [side|lid|aux], so the actual atlas tile is sideCount + lid - 1.
+        // CMP block.Lid is a 1-based index into the LID section; the atlas is
+        // laid out [side|lid|aux], so the atlas tile is sideCount + lid - 1.
         int sideCount = _style.SideTileCount;
 
         var verts = new List<float>(GameConfig.MapWidth * GameConfig.MapHeight * 24);
         for (int y = 0; y < GameConfig.MapHeight; y++)
         for (int x = 0; x < GameConfig.MapWidth; x++)
         {
-            var top = ShowGroundLevel ? FindGroundLid(_map, x, y) : FindTopLid(_map, x, y);
-            if (top is null) continue;
-            int lidByte = top.Lid;
-            if (lidByte == 0) continue;
-            int atlasIdx = sideCount + lidByte - 1;
-            if (atlasIdx < 0 || atlasIdx >= _atlas.TileCount) continue;
+            // Render EVERY visible lid in the column, bottom-to-top. The top
+            // lid is emitted last so its opaque pixels cover lower ones; its
+            // transparent pixels reveal whatever's underneath. This matches
+            // the web project's MapRenderer.ts loop (line 267-268) and is
+            // why decorative arrow/lane lids look right — the road or grass
+            // below shows through the transparent parts of the decoration.
+            var stack = _map.GetBlockStack(x, y);
+            for (int z = 0; z < stack.Count; z++)
+            {
+                var block = stack[z];
+                int lidByte = block.Lid;
+                if (lidByte == 0) continue;
+                int atlasIdx = sideCount + lidByte - 1;
+                if (atlasIdx < 0 || atlasIdx >= _atlas.TileCount) continue;
 
-            var uv = _atlas.GetUv(atlasIdx);
-            float x0 = x, y0 = y, x1 = x + 1, y1 = y + 1;
-            var nw = new Vector2(uv.u0, uv.v0);
-            var ne = new Vector2(uv.u1, uv.v0);
-            var se = new Vector2(uv.u1, uv.v1);
-            var sw = new Vector2(uv.u0, uv.v1);
-            if (top.FlipLeftRight) { (nw, ne) = (ne, nw); (sw, se) = (se, sw); }
-            for (int r = 0; r < (int)top.Rotation; r++)
-                (nw, ne, se, sw) = (sw, nw, ne, se);
+                var uv = _atlas.GetUv(atlasIdx);
+                float x0 = x, y0 = y, x1 = x + 1, y1 = y + 1;
+                var nw = new Vector2(uv.u0, uv.v0);
+                var ne = new Vector2(uv.u1, uv.v0);
+                var se = new Vector2(uv.u1, uv.v1);
+                var sw = new Vector2(uv.u0, uv.v1);
+                if (block.FlipLeftRight) { (nw, ne) = (ne, nw); (sw, se) = (se, sw); }
+                for (int r = 0; r < (int)block.Rotation; r++)
+                    (nw, ne, se, sw) = (sw, nw, ne, se);
 
-            AddTileVert(verts, x0, y0, nw);
-            AddTileVert(verts, x1, y0, ne);
-            AddTileVert(verts, x1, y1, se);
-            AddTileVert(verts, x0, y0, nw);
-            AddTileVert(verts, x1, y1, se);
-            AddTileVert(verts, x0, y1, sw);
+                AddTileVert(verts, x0, y0, nw);
+                AddTileVert(verts, x1, y0, ne);
+                AddTileVert(verts, x1, y1, se);
+                AddTileVert(verts, x0, y0, nw);
+                AddTileVert(verts, x1, y1, se);
+                AddTileVert(verts, x0, y1, sw);
+            }
         }
         _tileVertexCount = verts.Count / 4;
         GL.BindBuffer(BufferTarget.ArrayBuffer, _tileVbo);
