@@ -42,10 +42,20 @@ public sealed class TileAtlas
 
         return BuildFromTiles(tileCount, tile =>
         {
+            // CMP file tile 0 is a reserved blank slot; the actual first
+            // side tile is at file index 1. TileDecodeVsPngTests verifies
+            // this empirically against the web project's pre-extracted PNGs:
+            //   side_0000.png content == decode(file tile 1, CLUT @ index 4)
+            //   lid_0000.png  content == decode(file tile sideCount+1, CLUT @ 4*(sideCount+1))
+            // Without the +1 shift, every tile renders with its neighbour's
+            // pixels under the neighbour's CLUT — visually chaotic, but
+            // close enough that the bug was hard to spot.
+            int srcTile = tile + 1;
+
             // paletteIndices stores 4 CLUT entries per tile — one for each
             // possible block remap (TypeMapExt bits 4-5). We bake at remap=0
             // (Carnage3D StyleData.cpp:329 — `paletteIndices[4*tile + remap]`).
-            int paletteSlot = 4 * tile;
+            int paletteSlot = 4 * srcTile;
             int clutIndex = paletteSlot < style.PaletteIndices.Length
                 ? style.PaletteIndices[paletteSlot]
                 : 0;
@@ -57,9 +67,14 @@ public sealed class TileAtlas
             // alignment padding in ComputeOffsets exists for this reason.
             const int RowStride = 4 * TileSize;            // 256 px per scanline
             const int BlockRowBytes = TileSize * RowStride; // 64 × 256 = 16384
-            int blockX = tile % 4;
-            int blockY = tile / 4;
+            int blockX = srcTile % 4;
+            int blockY = srcTile / 4;
             int tileBase = blockY * BlockRowBytes + blockX * TileSize;
+
+            // Last atlas slot's srcTile may be the trailing pad block — bail
+            // out if we'd read past the tile section.
+            int lastByteNeeded = tileBase + (TileSize - 1) * RowStride + (TileSize - 1);
+            if (lastByteNeeded >= style.TileData.Length) return null;
 
             var rgba = new byte[TileSize * TileSize * 4];
             Span<byte> rgb = stackalloc byte[3];
