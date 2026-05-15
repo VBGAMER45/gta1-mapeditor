@@ -143,8 +143,10 @@ public sealed class MainForm : Form
 
         var help = new ToolStripMenuItem("&Help");
         help.DropDownItems.Add(MakeItem("&About", Keys.None, (_, _) =>
-            MessageBox.Show(this, "GTA1 Map Editor\nC# + WinForms + OpenTK\nReads / writes .CMP via .G24",
-                "About", MessageBoxButtons.OK, MessageBoxIcon.Information)));
+        {
+            using var dlg = new AboutForm();
+            dlg.ShowDialog(this);
+        }));
 
         menu.Items.AddRange(new ToolStripItem[] { file, edit, view, tools, help });
         return menu;
