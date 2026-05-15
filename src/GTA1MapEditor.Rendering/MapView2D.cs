@@ -261,15 +261,29 @@ public sealed class MapView2D : IMapView
         for (int y = 0; y < GameConfig.MapHeight; y++)
         for (int x = 0; x < GameConfig.MapWidth; x++)
         {
-            var top = FindTopLid(_map, x, y);
-            if (top is null) continue;
-            if (top.BlockType != BlockType.Road && top.BlockType != BlockType.Pavement) continue;
-            float cx = x + 0.5f, cy = y + 0.5f;
+            // Scan the column for any block that has nav flags — not just the
+            // topmost lid. Above a road there's usually an AIR or BUILDING
+            // block (overpass / elevated rail), so filtering the topmost
+            // block to Road/Pavement was hiding every tile's flags. Walk the
+            // full stack and OR the flags from any Road/Pavement block — gives
+            // the visible nav direction for the drivable layer underneath.
+            var stack = _map.GetBlockStack(x, y);
+            bool up = false, down = false, left = false, right = false;
+            foreach (var b in stack)
+            {
+                if (b.BlockType != BlockType.Road && b.BlockType != BlockType.Pavement) continue;
+                if (b.UpOk) up = true;
+                if (b.DownOk) down = true;
+                if (b.LeftOk) left = true;
+                if (b.RightOk) right = true;
+            }
+            if (!(up || down || left || right)) continue;
 
-            if (top.UpOk)    AddQuad(verts, cx - thick, cy - r,    cx + thick, cy,        0.2f, 0.9f, 1f, 0.9f);
-            if (top.DownOk)  AddQuad(verts, cx - thick, cy,        cx + thick, cy + r,    0.2f, 0.9f, 1f, 0.9f);
-            if (top.LeftOk)  AddQuad(verts, cx - r,     cy - thick, cx,         cy + thick, 0.2f, 0.9f, 1f, 0.9f);
-            if (top.RightOk) AddQuad(verts, cx,         cy - thick, cx + r,     cy + thick, 0.2f, 0.9f, 1f, 0.9f);
+            float cx = x + 0.5f, cy = y + 0.5f;
+            if (up)    AddQuad(verts, cx - thick, cy - r,    cx + thick, cy,        0.2f, 0.9f, 1f, 0.9f);
+            if (down)  AddQuad(verts, cx - thick, cy,        cx + thick, cy + r,    0.2f, 0.9f, 1f, 0.9f);
+            if (left)  AddQuad(verts, cx - r,     cy - thick, cx,         cy + thick, 0.2f, 0.9f, 1f, 0.9f);
+            if (right) AddQuad(verts, cx,         cy - thick, cx + r,     cy + thick, 0.2f, 0.9f, 1f, 0.9f);
         }
     }
 
