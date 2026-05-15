@@ -6,6 +6,20 @@ Reads stock maps directly from the original game (`NYC.CMP`, `SANB.CMP`, `MIAMI.
 
 By [vbgamer45](https://github.com/VBGAMER45)
 
+## Screenshots
+
+**2D top-down** — pure orthographic view, what Junction25 shows. Tile graphics decoded straight from `.G24`; placed cars and objects render with their actual G24 sprites at correct rotation.
+
+![Top-down view of NYC.CMP](screenshots/topdown1.PNG)
+
+**2.5D isometric** — dimetric projection, full lid + wall mesh with depth-buffered occlusion. Same atlas, slope-aware lids.
+
+![Isometric view of NYC.CMP](screenshots/2diso1.PNG)
+
+**3D free-look** — perspective camera, WASD + right-drag mouse-look. Scrollbars pan horizontally; Q/E adjust elevation.
+
+![3D free-look view of NYC.CMP](screenshots/3d1.PNG)
+
 ---
 
 ## Status
