@@ -26,7 +26,11 @@ public static class G24Reader
         {
             Header = header,
             Offsets = offsets,
-            TileData = ExtractRange(data, offsets.Tiles, (int)(header.SideSize + header.LidSize + header.AuxSize)),
+            // Tile section is padded to a multiple of 4 tiles (page row alignment)
+            // in the file, so we must extract through Anim's start rather than
+            // stop at the unpadded section sizes — otherwise the last partial
+            // row of tile pixels gets clipped.
+            TileData = ExtractRange(data, offsets.Tiles, offsets.Anim - offsets.Tiles),
             Anims = ReadAnims(span, header, offsets),
             PaletteData = ExtractPaged(data, offsets.Clut, header.ClutSize),
             PaletteIndices = ReadPaletteIndices(span, header, offsets),
