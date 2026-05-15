@@ -54,6 +54,8 @@ public sealed class EditorState
     public MapEditor? Editor { get; private set; }
     public TileAtlas? Atlas { get; private set; }
     public string? FilePath { get; private set; }
+    /// <summary>True when Atlas was built from pre-extracted PNGs instead of G24 CLUT decoding.</summary>
+    public bool UsingPngTiles { get; private set; }
 
     public TileSelection? Selection { get; private set; }
     public ToolMode Tool { get; private set; } = ToolMode.Select;
@@ -96,7 +98,24 @@ public sealed class EditorState
     {
         Map = map;
         Style = style;
-        Atlas = TileAtlas.Build(style);
+
+        // Prefer pre-extracted PNGs if found in the sibling styles folder —
+        // they were authored offline with full palette knowledge so colours
+        // always match the reference. Fall back to live G24 CLUT decoding
+        // otherwise.
+        var png = PngTileSource.TryLoad(path, map.Header.StyleNumber,
+            style.SideTileCount, style.LidTileCount, style.AuxTileCount);
+        if (png is not null)
+        {
+            Atlas = TileAtlas.BuildFromTiles(png.TileCount, png.GetTile);
+            UsingPngTiles = true;
+        }
+        else
+        {
+            Atlas = TileAtlas.Build(style);
+            UsingPngTiles = false;
+        }
+
         Editor = new MapEditor(map);
         FilePath = path;
         Selection = null;

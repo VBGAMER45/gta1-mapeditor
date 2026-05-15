@@ -584,8 +584,9 @@ public sealed class MainForm : Form
         if (_state.Map is null) { _mapLabel.Text = "No map loaded"; return; }
         string dirty = _state.IsDirty ? "*" : "";
         string name = Path.GetFileName(_state.FilePath ?? "untitled.cmp");
+        string tileSource = _state.UsingPngTiles ? "PNG" : "G24";
         _mapLabel.Text =
-            $"{name}{dirty}  ·  style {_state.Map.Header.StyleNumber}  ·  " +
+            $"{name}{dirty}  ·  style {_state.Map.Header.StyleNumber} ({tileSource})  ·  " +
             $"{_state.Map.Objects.Count} obj / {_state.Map.CarPositions.Count} car / " +
             $"{_state.Map.Routes.Count} rt / {_state.Map.NavSectors.Count} nav";
         Text = $"GTA1 Map Editor — {name}{dirty}";

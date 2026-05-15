@@ -30,49 +30,39 @@ public sealed class TileAtlas
     }
 
     /// <summary>
-    /// Decode every tile (side + lid + aux) into a single padded RGBA atlas.
-    /// Tile 0 is left transparent because both lid 0 and side 0 mean
-    /// "no texture" in the CMP block records.
+    /// Decode every tile from a G24 style into a single padded RGBA atlas.
+    /// (CMP wall byte N -> atlas slot N-1, lid byte N -> atlas slot
+    /// sideCount + N - 1, so atlas[0] is the first side tile — there's no
+    /// reserved transparent slot.)
     /// </summary>
     public static TileAtlas Build(G24StyleData style)
     {
         int tileCount = style.TileData.Length / (TileSize * TileSize);
-        int rows = (tileCount + Columns - 1) / Columns;
-        int width = Columns * CellSize;
-        int height = rows * CellSize;
-        var rgba = new byte[width * height * 4];
+        var palette = style.PaletteData;
 
-        var palette = style.PaletteData.AsSpan();
-        Span<byte> rgb = stackalloc byte[3];
-
-        for (int tile = 1; tile < tileCount; tile++) // tile 0 stays transparent
+        return BuildFromTiles(tileCount, tile =>
         {
             // paletteIndices stores 4 CLUT entries per tile — one for each
-            // possible block remap (TypeMapExt bits 4-5). We bake the atlas
-            // at remap=0 (the base palette); per-block remap variations are
-            // a future TODO that would either need 4× atlas variants or a
-            // palette-lookup fragment shader. (Source: Carnage3D
-            // StyleData.cpp:329 — `paletteIndices[4 * tile + remap]`.)
+            // possible block remap (TypeMapExt bits 4-5). We bake at remap=0
+            // (Carnage3D StyleData.cpp:329 — `paletteIndices[4*tile + remap]`).
             int paletteSlot = 4 * tile;
             int clutIndex = paletteSlot < style.PaletteIndices.Length
                 ? style.PaletteIndices[paletteSlot]
                 : 0;
-            int srcBase = tile * TileSize * TileSize;
-            int cellX = (tile % Columns) * CellSize;
-            int cellY = (tile / Columns) * CellSize;
-            int innerX = cellX + Padding;
-            int innerY = cellY + Padding;
 
-            // Inner 64x64 tile content.
+            var rgba = new byte[TileSize * TileSize * 4];
+            int srcBase = tile * TileSize * TileSize;
+            Span<byte> rgb = stackalloc byte[3];
+            var paletteSpan = palette.AsSpan();
+
             for (int py = 0; py < TileSize; py++)
             {
-                int dstRow = (innerY + py) * width;
                 for (int px = 0; px < TileSize; px++)
                 {
                     byte pixel = style.TileData[srcBase + py * TileSize + px];
-                    int dst = (dstRow + innerX + px) * 4;
+                    int dst = (py * TileSize + px) * 4;
                     if (pixel == 0) { rgba[dst + 3] = 0; continue; }
-                    if (Palette.LookupColor(palette, clutIndex, pixel, rgb))
+                    if (Palette.LookupColor(paletteSpan, clutIndex, pixel, rgb))
                     {
                         rgba[dst + 0] = rgb[0];
                         rgba[dst + 1] = rgb[1];
@@ -81,19 +71,53 @@ public sealed class TileAtlas
                     }
                 }
             }
+            return rgba;
+        });
+    }
 
-            // Edge-clamp padding: copy the four border rows/columns of the
-            // tile into the surrounding 1-pixel ring so linear minification
+    /// <summary>
+    /// Generic atlas builder. <paramref name="getTileRgba"/> is invoked for
+    /// each tile index 0..<paramref name="tileCount"/>-1 and should return
+    /// a freshly-allocated 64×64×4 = 16384-byte RGBA buffer (top-left
+    /// origin), or null to leave that slot transparent. Padding around
+    /// each cell uses the tile's own edge pixels so mipmap minification
+    /// stays in-tile.
+    /// </summary>
+    public static TileAtlas BuildFromTiles(int tileCount, Func<int, byte[]?> getTileRgba)
+    {
+        int rows = (tileCount + Columns - 1) / Columns;
+        int width = Columns * CellSize;
+        int height = rows * CellSize;
+        var rgba = new byte[width * height * 4];
+
+        for (int tile = 0; tile < tileCount; tile++)
+        {
+            var tilePixels = getTileRgba(tile);
+            if (tilePixels is null || tilePixels.Length < TileSize * TileSize * 4) continue;
+
+            int cellX = (tile % Columns) * CellSize;
+            int cellY = (tile / Columns) * CellSize;
+            int innerX = cellX + Padding;
+            int innerY = cellY + Padding;
+
+            // Inner 64×64 tile content.
+            int srcStride = TileSize * 4;
+            for (int py = 0; py < TileSize; py++)
+            {
+                int dstOff = ((innerY + py) * width + innerX) * 4;
+                Buffer.BlockCopy(tilePixels, py * srcStride, rgba, dstOff, srcStride);
+            }
+
+            // Edge-clamp padding ring: copy the tile's border rows/columns
+            // into the surrounding 1-pixel margin so linear minification
             // at the cell boundary stays inside the tile's own colours.
             int stride = width * 4;
             int innerBase = (innerY * width + innerX) * 4;
-            // Top / bottom rows
             for (int px = 0; px < TileSize; px++)
             {
                 Buffer.BlockCopy(rgba, innerBase + px * 4, rgba, ((innerY - 1) * width + innerX + px) * 4, 4);
                 Buffer.BlockCopy(rgba, innerBase + (TileSize - 1) * stride + px * 4, rgba, ((innerY + TileSize) * width + innerX + px) * 4, 4);
             }
-            // Left / right columns
             for (int py = 0; py < TileSize; py++)
             {
                 Buffer.BlockCopy(rgba, innerBase + py * stride, rgba, ((innerY + py) * width + innerX - 1) * 4, 4);
