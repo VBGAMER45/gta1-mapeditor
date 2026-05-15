@@ -76,8 +76,8 @@ public sealed class EditorState
     /// <summary>If true, MapView2D draws nav-flag arrows on every drivable tile.</summary>
     public bool ShowTrafficArrows { get; set; }
 
-    /// <summary>If true (default), top-down view renders the player's ground level (skips elevated rails/highways). False renders the topmost lid in each column.</summary>
-    public bool ShowGroundLevel { get; set; } = true;
+    /// <summary>If true, top-down view renders the player's ground level (skips decorative overlays only). False (default) renders the topmost lid in each column, like Junction25.</summary>
+    public bool ShowGroundLevel { get; set; }
 
     public CommandStack Commands { get; } = new();
 

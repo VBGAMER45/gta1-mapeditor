@@ -89,13 +89,13 @@ public sealed class MapView2D : IMapView
     public bool ShowTrafficArrows { get; set; }
 
     /// <summary>
-    /// When true (default), each tile renders the ground block the player
-    /// would walk on — same heuristic Junction25 uses (skips decorative
-    /// under-ground overlays, water hidden under a bridge deck, and
-    /// pillars holding up an elevated road). When false, renders the
-    /// topmost lid in the column (shows building rooftops + elevated rails).
+    /// When true, each tile renders the player's walkable surface (skips
+    /// decorative under-ground overlays only — water under bridges and
+    /// elevated rails stay visible so you can see the world geography).
+    /// When false (default), renders the topmost lid in the column —
+    /// matches Junction25's overhead view.
     /// </summary>
-    public bool ShowGroundLevel { get; set; } = true;
+    public bool ShowGroundLevel { get; set; }
 
     public bool UsesFlyCamera => false;
 
@@ -473,11 +473,14 @@ public sealed class MapView2D : IMapView
     }
 
     /// <summary>
-    /// Pick the block the player would actually walk on at this tile. Walks
-    /// the column bottom-up, skipping AIR, decorative under-ground overlays,
-    /// water hidden beneath a bridge deck, and pillars supporting an
-    /// elevated road. Falls through to FindTopLid if no ground block resolves.
-    /// Same approach as the web project's getGroundBlock in CMPParser.ts.
+    /// Pick the player's walkable surface. Walks bottom-up, skipping AIR
+    /// and decorative BUILDING overlays (lid textures painted UNDER the
+    /// real ground for road arrows / lane markings). Water under bridges
+    /// and pillars under elevated roads are NOT skipped — the user
+    /// explicitly wants to see water near bridges and the ground beneath
+    /// any elevated structure, so this is intentionally more permissive
+    /// than the web project's getGroundBlock. Falls through to FindTopLid
+    /// when no ground block has a lid (e.g., bare basement under a building).
     /// </summary>
     private static BlockInfo? FindGroundLid(CmpMap map, int x, int y)
     {
@@ -487,8 +490,6 @@ public sealed class MapView2D : IMapView
             var b = stack[i];
             if (b.BlockType == BlockType.Air) continue;
             if (IsDecorativeBuildingAt(stack, i)) continue;
-            if (IsUnderBridgeWater(stack, i)) continue;
-            if (IsUnderElevatedRoad(stack, i)) continue;
             if (b.Lid != 0) return b;
         }
         return FindTopLid(map, x, y);
@@ -505,34 +506,6 @@ public sealed class MapView2D : IMapView
             var t = stack[j].BlockType;
             if (t == BlockType.Air) continue;
             return t == BlockType.Road || t == BlockType.Pavement || t == BlockType.Field;
-        }
-        return false;
-    }
-
-    /// <summary>WATER with a road/pavement/field block above — the player is on a bridge over the water.</summary>
-    private static bool IsUnderBridgeWater(List<BlockInfo> stack, int i)
-    {
-        if (stack[i].BlockType != BlockType.Water) return false;
-        for (int j = i + 1; j < stack.Count; j++)
-        {
-            var t = stack[j].BlockType;
-            if (t == BlockType.Air) continue;
-            return t == BlockType.Road || t == BlockType.Pavement || t == BlockType.Field;
-        }
-        return false;
-    }
-
-    /// <summary>BUILDING with a ROAD eventually above through AIR/BUILDING/PAVEMENT — a pillar supporting an elevated road.</summary>
-    private static bool IsUnderElevatedRoad(List<BlockInfo> stack, int i)
-    {
-        if (stack[i].BlockType != BlockType.Building) return false;
-        for (int j = i + 1; j < stack.Count; j++)
-        {
-            var t = stack[j].BlockType;
-            if (t == BlockType.Air) continue;
-            if (t == BlockType.Building) continue;
-            if (t == BlockType.Pavement) continue;
-            return t == BlockType.Road;
         }
         return false;
     }
