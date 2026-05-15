@@ -320,10 +320,10 @@ public sealed class MainForm : Form
     private void OnScroll()
     {
         if (_syncingScrollbars || _viewControl.View is null) return;
-        var view = _viewControl.View;
-        if (view is MapView3D) return; // 3D fly cam ignores scrollbars
         // Scrollbar value represents the left/top of the visible region.
-        // Camera is centered, so add half-viewport to get camera position.
+        // Camera is centered on it, so add half-viewport to get camera position.
+        // For 3D fly-cam this drives Eye.X/Y; elevation, yaw and pitch stay put
+        // (mouse-look + WASD/QE handle those).
         float halfW = HalfVisibleTilesX();
         float halfH = HalfVisibleTilesY();
         _viewControl.SetCameraWorld(_hScroll.Value + halfW, _vScroll.Value + halfH);
@@ -331,7 +331,7 @@ public sealed class MainForm : Form
 
     private void SyncScrollbars()
     {
-        if (_viewControl.View is null || _viewControl.View is MapView3D) return;
+        if (_viewControl.View is null) return;
         var cam = _viewControl.View.CameraWorld;
         float halfW = HalfVisibleTilesX();
         float halfH = HalfVisibleTilesY();
@@ -353,15 +353,26 @@ public sealed class MainForm : Form
 
     private void UpdateScrollbarVisibility()
     {
-        bool show3D = _state.View != ViewMode.Perspective3D;
-        _hScroll.Visible = show3D;
-        _vScroll.Visible = show3D;
+        // Scrollbars work in every view mode now — 3D drives Eye.X/Y; 2D and
+        // iso drive their orthographic camera centres. Always visible.
+        _hScroll.Visible = true;
+        _vScroll.Visible = true;
     }
 
     private float HalfVisibleTilesX()
     {
         if (_viewControl.View is MapView2D v2) return _viewControl.ClientSize.Width * 0.5f / v2.PixelsPerTile;
         if (_viewControl.View is MapViewIso vi) return vi.OrthoSize * (_viewControl.ClientSize.Width / Math.Max(_viewControl.ClientSize.Height, 1f));
+        if (_viewControl.View is MapView3D v3)
+        {
+            // Approximate the ground-plane footprint of the perspective frustum:
+            // half-width ≈ eye-altitude × tan(½ FOV). At default Eye.Z=30 / FOV=60°
+            // that's ~17 tiles, which gives a reasonable thumb size. Yaw + pitch
+            // shift the visible region but accurate frustum math isn't needed
+            // for a navigation scrollbar.
+            float halfFovRad = MathF.PI / 180f * v3.FieldOfViewDegrees * 0.5f;
+            return MathF.Max(4f, v3.Eye.Z * MathF.Tan(halfFovRad));
+        }
         return GameConfig.MapWidth * 0.5f;
     }
 
@@ -369,6 +380,11 @@ public sealed class MainForm : Form
     {
         if (_viewControl.View is MapView2D v2) return _viewControl.ClientSize.Height * 0.5f / v2.PixelsPerTile;
         if (_viewControl.View is MapViewIso vi) return vi.OrthoSize;
+        if (_viewControl.View is MapView3D v3)
+        {
+            float halfFovRad = MathF.PI / 180f * v3.FieldOfViewDegrees * 0.5f;
+            return MathF.Max(4f, v3.Eye.Z * MathF.Tan(halfFovRad));
+        }
         return GameConfig.MapHeight * 0.5f;
     }
 
