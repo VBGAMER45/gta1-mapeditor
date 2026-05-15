@@ -3,43 +3,58 @@ using GTA1MapEditor.Rendering;
 namespace GTA1MapEditor.App;
 
 /// <summary>
-/// Modal dialog showing every tile in the atlas as a clickable thumbnail.
-/// Exposes the chosen tile index via <see cref="SelectedTile"/>.
+/// Modal dialog showing one tile section (Side / Lid / Aux) as a grid of
+/// thumbnails. Returns a 1-based index inside that section, which is the
+/// value stored in <c>BlockInfo.Lid</c> / <c>BlockInfo.Left</c> etc.
+/// Cell 0 represents "no texture".
 /// </summary>
 public sealed class TilePickerForm : Form
 {
-    public int SelectedTile { get; private set; }
+    /// <summary>0 = no texture, 1..N = section tile number.</summary>
+    public int SelectedSectionTile { get; private set; }
 
     private readonly Panel _scroll = new() { Dock = DockStyle.Fill, AutoScroll = true };
     private readonly Bitmap _atlasBitmap;
+    private readonly int _sectionStart;
+    private readonly int _sectionCount;
     private const int CellSize = 48;
     private const int Columns = 16;
-    private readonly int _tileCount;
 
-    public TilePickerForm(TileAtlas atlas, int initialTile, string title)
+    public TilePickerForm(TileAtlas atlas, int sideCount, int lidCount,
+        TileSection section, int initialSectionTile, string title)
     {
         Text = title;
         Width = Columns * CellSize + 64;
         Height = 600;
         StartPosition = FormStartPosition.CenterParent;
         FormBorderStyle = FormBorderStyle.SizableToolWindow;
-        SelectedTile = initialTile;
-        _tileCount = atlas.TileCount;
+        SelectedSectionTile = initialSectionTile;
+
+        (_sectionStart, _sectionCount) = section switch
+        {
+            TileSection.Side => (0, sideCount),
+            TileSection.Lid  => (sideCount, lidCount),
+            TileSection.Aux  => (sideCount + lidCount, Math.Max(0, atlas.TileCount - sideCount - lidCount)),
+            _ => (0, 0),
+        };
 
         _atlasBitmap = AtlasToBitmap(atlas);
         _scroll.Paint += DrawGrid;
         _scroll.MouseClick += OnPick;
-        _scroll.AutoScrollMinSize = new Size(Columns * CellSize, ((_tileCount + Columns - 1) / Columns) * CellSize);
+        // Grid is "no texture" cell (value 0) + sectionCount tile cells.
+        int gridCells = 1 + _sectionCount;
+        _scroll.AutoScrollMinSize = new Size(Columns * CellSize,
+            ((gridCells + Columns - 1) / Columns) * CellSize);
         Controls.Add(_scroll);
 
         var status = new StatusStrip();
-        var lbl = new ToolStripStatusLabel { Text = $"Tile {initialTile}" };
+        var lbl = new ToolStripStatusLabel { Text = $"{section} {initialSectionTile}" };
         status.Items.Add(lbl);
         Controls.Add(status);
         _scroll.MouseMove += (_, e) =>
         {
             int tile = HitTest(e.Location);
-            if (tile >= 0) lbl.Text = $"Tile {tile}";
+            if (tile >= 0) lbl.Text = tile == 0 ? $"{section} 0 (no texture)" : $"{section} {tile}";
         };
     }
 
@@ -50,17 +65,32 @@ public sealed class TilePickerForm : Form
         g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
         g.Clear(Color.FromArgb(30, 30, 30));
 
-        int rows = (_tileCount + Columns - 1) / Columns;
-        for (int i = 0; i < _tileCount; i++)
+        int gridCells = 1 + _sectionCount;
+        for (int i = 0; i < gridCells; i++)
         {
             int cellX = (i % Columns) * CellSize;
             int cellY = (i / Columns) * CellSize;
-            int atlasX = (i % TileAtlas.Columns) * TileAtlas.CellSize + TileAtlas.Padding;
-            int atlasY = (i / TileAtlas.Columns) * TileAtlas.CellSize + TileAtlas.Padding;
-            var src = new Rectangle(atlasX, atlasY, TileAtlas.TileSize, TileAtlas.TileSize);
             var dst = new Rectangle(cellX + 1, cellY + 1, CellSize - 2, CellSize - 2);
-            g.DrawImage(_atlasBitmap, dst, src, GraphicsUnit.Pixel);
-            if (i == SelectedTile)
+
+            if (i == 0)
+            {
+                // "No texture" cell — chequered pattern + ∅ marker.
+                using var hatch = new System.Drawing.Drawing2D.HatchBrush(
+                    System.Drawing.Drawing2D.HatchStyle.DiagonalCross, Color.DimGray, Color.Black);
+                g.FillRectangle(hatch, dst);
+                using var pen2 = new Pen(Color.LightGray, 1);
+                g.DrawString("0", Font, Brushes.White, dst.X + 4, dst.Y + 4);
+            }
+            else
+            {
+                int atlasTile = _sectionStart + (i - 1);
+                int atlasX = (atlasTile % TileAtlas.Columns) * TileAtlas.CellSize + TileAtlas.Padding;
+                int atlasY = (atlasTile / TileAtlas.Columns) * TileAtlas.CellSize + TileAtlas.Padding;
+                var src = new Rectangle(atlasX, atlasY, TileAtlas.TileSize, TileAtlas.TileSize);
+                g.DrawImage(_atlasBitmap, dst, src, GraphicsUnit.Pixel);
+            }
+
+            if (i == SelectedSectionTile)
             {
                 using var pen = new Pen(Color.Yellow, 2);
                 g.DrawRectangle(pen, dst);
@@ -72,7 +102,7 @@ public sealed class TilePickerForm : Form
     {
         int tile = HitTest(e.Location);
         if (tile < 0) return;
-        SelectedTile = tile;
+        SelectedSectionTile = tile;
         DialogResult = DialogResult.OK;
         Close();
     }
@@ -83,8 +113,9 @@ public sealed class TilePickerForm : Form
         int col = pt.X / CellSize;
         int row = pt.Y / CellSize;
         if (col < 0 || col >= Columns) return -1;
-        int tile = row * Columns + col;
-        return tile >= 0 && tile < _tileCount ? tile : -1;
+        int cell = row * Columns + col;
+        int gridCells = 1 + _sectionCount;
+        return cell >= 0 && cell < gridCells ? cell : -1;
     }
 
     private static Bitmap AtlasToBitmap(TileAtlas atlas)
@@ -93,8 +124,6 @@ public sealed class TilePickerForm : Form
             System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height),
             System.Drawing.Imaging.ImageLockMode.WriteOnly, bmp.PixelFormat);
-
-        // OpenGL atlas is RGBA; GDI+ Format32bppArgb is BGRA. Build a temporary swapped buffer then memcpy.
         var bgra = new byte[atlas.Rgba.Length];
         for (int i = 0; i + 3 < atlas.Rgba.Length; i += 4)
         {

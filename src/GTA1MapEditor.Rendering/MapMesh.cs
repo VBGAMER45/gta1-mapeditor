@@ -22,7 +22,12 @@ public static class MapMesh
     /// <summary>Floats per vertex.</summary>
     public const int FloatsPerVertex = 5;
 
-    public static float[] BuildFull(CmpMap map, TileAtlas atlas)
+    /// <summary>
+    /// Lids + four walls for every block in every column. Block bytes are
+    /// 1-based section-relative: lid N → atlas (sideTileCount + N - 1),
+    /// wall N → atlas (N - 1). 0 = no texture (skipped).
+    /// </summary>
+    public static float[] BuildFull(CmpMap map, TileAtlas atlas, int sideTileCount)
     {
         var verts = new List<float>(1 << 16);
         for (int ty = 0; ty < GameConfig.MapHeight; ty++)
@@ -33,43 +38,50 @@ public static class MapMesh
             {
                 var b = stack[z];
 
-                // Lid: corners interpolated via SlopeGeometry. Flat blocks default to (1,1,1,1) → top of cube.
-                if (b.Lid != 0 && b.Lid < atlas.TileCount)
-                    EmitLid(verts, atlas, tx, ty, z, b);
+                int lidAtlas = b.Lid    > 0 ? sideTileCount + b.Lid - 1 : -1;
+                int topAtlas = b.Top    > 0 ? b.Top    - 1 : -1;
+                int botAtlas = b.Bottom > 0 ? b.Bottom - 1 : -1;
+                int lftAtlas = b.Left   > 0 ? b.Left   - 1 : -1;
+                int rgtAtlas = b.Right  > 0 ? b.Right  - 1 : -1;
 
-                // Walls between z and z+1. Skip if texture index is 0.
-                if (b.Top != 0    && b.Top    < atlas.TileCount) EmitNorthWall(verts, atlas, tx, ty, z, b.Top, b.FlipLeftRight);
-                if (b.Bottom != 0 && b.Bottom < atlas.TileCount) EmitSouthWall(verts, atlas, tx, ty, z, b.Bottom, b.FlipLeftRight);
-                if (b.Left != 0   && b.Left   < atlas.TileCount) EmitWestWall(verts, atlas, tx, ty, z, b.Left, b.FlipLeftRight);
-                if (b.Right != 0  && b.Right  < atlas.TileCount) EmitEastWall(verts, atlas, tx, ty, z, b.Right, b.FlipLeftRight);
+                if (lidAtlas >= 0 && lidAtlas < atlas.TileCount)
+                    EmitLid(verts, atlas, tx, ty, z, b, lidAtlas);
+                if (topAtlas >= 0 && topAtlas < atlas.TileCount)
+                    EmitNorthWall(verts, atlas, tx, ty, z, topAtlas, b.FlipLeftRight);
+                if (botAtlas >= 0 && botAtlas < atlas.TileCount)
+                    EmitSouthWall(verts, atlas, tx, ty, z, botAtlas, b.FlipLeftRight);
+                if (lftAtlas >= 0 && lftAtlas < atlas.TileCount)
+                    EmitWestWall(verts, atlas, tx, ty, z, lftAtlas, b.FlipLeftRight);
+                if (rgtAtlas >= 0 && rgtAtlas < atlas.TileCount)
+                    EmitEastWall(verts, atlas, tx, ty, z, rgtAtlas, b.FlipLeftRight);
             }
         }
         return verts.ToArray();
     }
 
-    public static float[] BuildTopOnly(CmpMap map, TileAtlas atlas)
+    public static float[] BuildTopOnly(CmpMap map, TileAtlas atlas, int sideTileCount)
     {
         var verts = new List<float>(GameConfig.MapWidth * GameConfig.MapHeight * 6 * FloatsPerVertex);
         for (int ty = 0; ty < GameConfig.MapHeight; ty++)
         for (int tx = 0; tx < GameConfig.MapWidth; tx++)
         {
             var stack = map.GetBlockStack(tx, ty);
-            // Pick first block from top with a lid (skip wall-only caps).
             BlockInfo? top = null;
             for (int i = stack.Count - 1; i >= 0; i--)
                 if (stack[i].Lid != 0) { top = stack[i]; break; }
-            if (top is null || top.Lid >= atlas.TileCount) continue;
-            // Top-down ignores z (camera is overhead) — emit at a constant plane.
-            EmitLidFlat(verts, atlas, tx, ty, 0, top);
+            if (top is null) continue;
+            int atlasIdx = sideTileCount + top.Lid - 1;
+            if (atlasIdx < 0 || atlasIdx >= atlas.TileCount) continue;
+            EmitLidFlat(verts, atlas, tx, ty, 0, top, atlasIdx);
         }
         return verts.ToArray();
     }
 
     // ─── Quad emission ────────────────────────────────────────────────────
 
-    private static void EmitLid(List<float> verts, TileAtlas atlas, int tx, int ty, int z, BlockInfo b)
+    private static void EmitLid(List<float> verts, TileAtlas atlas, int tx, int ty, int z, BlockInfo b, int atlasTile)
     {
-        var (u0, v0, u1, v1) = atlas.GetUv(b.Lid);
+        var (u0, v0, u1, v1) = atlas.GetUv(atlasTile);
         var nw = new Vector2(u0, v0);
         var ne = new Vector2(u1, v0);
         var se = new Vector2(u1, v1);
@@ -94,9 +106,9 @@ public static class MapMesh
     }
 
     /// <summary>Lid emitter that ignores slope (used for top-down view at a constant z).</summary>
-    private static void EmitLidFlat(List<float> verts, TileAtlas atlas, int tx, int ty, float z, BlockInfo b)
+    private static void EmitLidFlat(List<float> verts, TileAtlas atlas, int tx, int ty, float z, BlockInfo b, int atlasTile)
     {
-        var (u0, v0, u1, v1) = atlas.GetUv(b.Lid);
+        var (u0, v0, u1, v1) = atlas.GetUv(atlasTile);
         var nw = new Vector2(u0, v0);
         var ne = new Vector2(u1, v0);
         var se = new Vector2(u1, v1);
@@ -113,7 +125,7 @@ public static class MapMesh
                        tx,     ty + 1, z, sw);
     }
 
-    private static void EmitNorthWall(List<float> verts, TileAtlas atlas, int tx, int ty, int z, byte tile, bool flip)
+    private static void EmitNorthWall(List<float> verts, TileAtlas atlas, int tx, int ty, int z, int tile, bool flip)
     {
         var (u0, v0, u1, v1) = atlas.GetUv(tile);
         if (flip) (u0, u1) = (u1, u0);
@@ -126,7 +138,7 @@ public static class MapMesh
                        tx,     ty, z,     new Vector2(u0, v1));
     }
 
-    private static void EmitSouthWall(List<float> verts, TileAtlas atlas, int tx, int ty, int z, byte tile, bool flip)
+    private static void EmitSouthWall(List<float> verts, TileAtlas atlas, int tx, int ty, int z, int tile, bool flip)
     {
         var (u0, v0, u1, v1) = atlas.GetUv(tile);
         if (flip) (u0, u1) = (u1, u0);
@@ -139,7 +151,7 @@ public static class MapMesh
                        tx + 1, ty + 1, z,     new Vector2(u0, v1));
     }
 
-    private static void EmitWestWall(List<float> verts, TileAtlas atlas, int tx, int ty, int z, byte tile, bool flip)
+    private static void EmitWestWall(List<float> verts, TileAtlas atlas, int tx, int ty, int z, int tile, bool flip)
     {
         var (u0, v0, u1, v1) = atlas.GetUv(tile);
         if (flip) (u0, u1) = (u1, u0);
@@ -152,7 +164,7 @@ public static class MapMesh
                        tx, ty,     z,     new Vector2(u0, v1));
     }
 
-    private static void EmitEastWall(List<float> verts, TileAtlas atlas, int tx, int ty, int z, byte tile, bool flip)
+    private static void EmitEastWall(List<float> verts, TileAtlas atlas, int tx, int ty, int z, int tile, bool flip)
     {
         var (u0, v0, u1, v1) = atlas.GetUv(tile);
         if (flip) (u0, u1) = (u1, u0);

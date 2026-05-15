@@ -45,6 +45,7 @@ public sealed class MapViewIso : IMapView
     private int _vertexCount;
     private TileAtlas? _atlas;
     private CmpMap? _map;
+    private G24StyleData? _style;
 
     // Camera state
     public Vector3 Target { get; set; } = new(GameConfig.MapWidth / 2f, GameConfig.MapHeight / 2f, 0f);
@@ -84,6 +85,7 @@ public sealed class MapViewIso : IMapView
     public void SetMap(CmpMap map, G24StyleData style)
     {
         _map = map;
+        _style = style;
         _atlas = TileAtlas.Build(style);
         UploadAtlas();
         RebuildMesh();
@@ -91,8 +93,8 @@ public sealed class MapViewIso : IMapView
 
     public void RebuildMesh()
     {
-        if (_map is null || _atlas is null) { _vertexCount = 0; return; }
-        var verts = MapMesh.BuildFull(_map, _atlas);
+        if (_map is null || _atlas is null || _style is null) { _vertexCount = 0; return; }
+        var verts = MapMesh.BuildFull(_map, _atlas, _style.SideTileCount);
         _vertexCount = verts.Length / MapMesh.FloatsPerVertex;
         GL.BindBuffer(BufferTarget.ArrayBuffer, _vbo);
         GL.BufferData(BufferTarget.ArrayBuffer, verts.Length * sizeof(float),

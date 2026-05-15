@@ -59,17 +59,20 @@ public sealed class TileAttributesForm : Form
         StartPosition = FormStartPosition.Manual;
         Location = new Point(Screen.PrimaryScreen?.WorkingArea.Right - 560 ?? 800, 80);
 
-        _btnLid   = new TileButton("Lid (top)");
-        _btnNorth = new TileButton("North");
-        _btnSouth = new TileButton("South");
-        _btnEast  = new TileButton("East");
-        _btnWest  = new TileButton("West");
+        // Each button is bound to its tile section so the picker filters
+        // the grid and the value stored is the 1-based section-relative byte
+        // (matching BlockInfo.Lid / .Left / etc).
+        _btnLid   = new TileButton("Lid (top)", TileSection.Lid);
+        _btnNorth = new TileButton("North", TileSection.Side);
+        _btnSouth = new TileButton("South", TileSection.Side);
+        _btnEast  = new TileButton("East", TileSection.Side);
+        _btnWest  = new TileButton("West", TileSection.Side);
 
-        _btnLid.Clicked   += () => PickTexture(t => _btnLid.TileIndex = t,   "Lid");
-        _btnNorth.Clicked += () => PickTexture(t => _btnNorth.TileIndex = t, "North wall");
-        _btnSouth.Clicked += () => PickTexture(t => _btnSouth.TileIndex = t, "South wall");
-        _btnEast.Clicked  += () => PickTexture(t => _btnEast.TileIndex = t,  "East wall");
-        _btnWest.Clicked  += () => PickTexture(t => _btnWest.TileIndex = t,  "West wall");
+        _btnLid.Clicked   += () => PickTexture(_btnLid,   "Lid");
+        _btnNorth.Clicked += () => PickTexture(_btnNorth, "North wall");
+        _btnSouth.Clicked += () => PickTexture(_btnSouth, "South wall");
+        _btnEast.Clicked  += () => PickTexture(_btnEast,  "East wall");
+        _btnWest.Clicked  += () => PickTexture(_btnWest,  "West wall");
 
         _cubeRadios = new RadioButton[6];
         for (int i = 0; i < _cubeRadios.Length; i++)
@@ -248,11 +251,13 @@ public sealed class TileAttributesForm : Form
     private void UpdateTilePreviews()
     {
         var atlas = _state.Atlas;
-        _btnLid.SetAtlas(atlas);
-        _btnNorth.SetAtlas(atlas);
-        _btnSouth.SetAtlas(atlas);
-        _btnEast.SetAtlas(atlas);
-        _btnWest.SetAtlas(atlas);
+        int sideCount = _state.Style?.SideTileCount ?? 0;
+        int lidCount  = _state.Style?.LidTileCount ?? 0;
+        _btnLid.SetAtlas(atlas, sideCount, lidCount);
+        _btnNorth.SetAtlas(atlas, sideCount, lidCount);
+        _btnSouth.SetAtlas(atlas, sideCount, lidCount);
+        _btnEast.SetAtlas(atlas, sideCount, lidCount);
+        _btnWest.SetAtlas(atlas, sideCount, lidCount);
     }
 
     private void OnFieldChanged(object? sender, EventArgs e)
@@ -294,12 +299,15 @@ public sealed class TileAttributesForm : Form
         _snapshotBeforeEdit = after;
     }
 
-    private void PickTexture(Action<int> apply, string label)
+    private void PickTexture(TileButton button, string label)
     {
-        if (_state.Atlas is null) return;
-        using var picker = new TilePickerForm(_state.Atlas, 0, $"Pick {label} texture");
+        if (_state.Atlas is null || _state.Style is null) return;
+        int sideCount = _state.Style.SideTileCount;
+        int lidCount  = _state.Style.LidTileCount;
+        using var picker = new TilePickerForm(_state.Atlas, sideCount, lidCount,
+            button.Section, button.TileIndex, $"Pick {label} texture");
         if (picker.ShowDialog(this) == DialogResult.OK)
-            apply(picker.SelectedTile);
+            button.TileIndex = picker.SelectedSectionTile;
     }
 
     private void SetControlsEnabled(bool on)
@@ -319,10 +327,16 @@ public sealed class TileAttributesForm : Form
         public event Action? Clicked;
         public event EventHandler? TileIndexChanged;
 
+        /// <summary>The tile section this button targets (Lid for lids, Side for walls).</summary>
+        public TileSection Section { get; }
+
         private int _tileIndex;
         private TileAtlas? _atlas;
+        private int _sideCount;
+        private int _lidCount;
         private Bitmap? _preview;
 
+        /// <summary>1-based section-relative tile (the value stored in BlockInfo.Lid / .Left etc); 0 = no texture.</summary>
         public int TileIndex
         {
             get => _tileIndex;
@@ -336,8 +350,9 @@ public sealed class TileAttributesForm : Form
             }
         }
 
-        public TileButton(string toolTip)
+        public TileButton(string toolTip, TileSection section)
         {
+            Section = section;
             Width = 76;
             Height = 76;
             Margin = new Padding(2);
@@ -349,9 +364,11 @@ public sealed class TileAttributesForm : Form
             Click += (_, _) => Clicked?.Invoke();
         }
 
-        public void SetAtlas(TileAtlas? atlas)
+        public void SetAtlas(TileAtlas? atlas, int sideCount, int lidCount)
         {
             _atlas = atlas;
+            _sideCount = sideCount;
+            _lidCount = lidCount;
             RebuildPreview();
         }
 
@@ -359,13 +376,23 @@ public sealed class TileAttributesForm : Form
         {
             _preview?.Dispose();
             _preview = null;
-            if (_atlas is null || _tileIndex <= 0 || _tileIndex >= _atlas.TileCount)
+            if (_atlas is null || _tileIndex <= 0)
             {
                 Image = null;
                 return;
             }
-            int atlasX = (_tileIndex % TileAtlas.Columns) * TileAtlas.CellSize + TileAtlas.Padding;
-            int atlasY = (_tileIndex / TileAtlas.Columns) * TileAtlas.CellSize + TileAtlas.Padding;
+            // Convert section-relative byte → atlas index based on this button's section.
+            int atlasTile = Section switch
+            {
+                TileSection.Side => _tileIndex - 1,
+                TileSection.Lid  => _sideCount + _tileIndex - 1,
+                TileSection.Aux  => _sideCount + _lidCount + _tileIndex - 1,
+                _ => -1,
+            };
+            if (atlasTile < 0 || atlasTile >= _atlas.TileCount) { Image = null; return; }
+
+            int atlasX = (atlasTile % TileAtlas.Columns) * TileAtlas.CellSize + TileAtlas.Padding;
+            int atlasY = (atlasTile / TileAtlas.Columns) * TileAtlas.CellSize + TileAtlas.Padding;
             var bmp = new Bitmap(48, 48);
             using (var g = Graphics.FromImage(bmp))
             {

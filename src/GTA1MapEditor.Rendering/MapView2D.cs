@@ -71,6 +71,8 @@ public sealed class MapView2D : IMapView
     private G24StyleData? _style;
     private SpriteCache? _spriteCache;
     private readonly float[] _spriteScratch = new float[24]; // 6 vertices * (x,y,u,v)
+    /// <summary>car_info entries keyed by ModelId. CMP CarPosition.Type is a modelId, not an array index.</summary>
+    private readonly Dictionary<byte, G24CarInfo> _carByModelId = new();
 
     public float ViewportWidth { get; set; } = 1;
     public float ViewportHeight { get; set; } = 1;
@@ -133,6 +135,9 @@ public sealed class MapView2D : IMapView
         _spriteCache?.Dispose();
         _spriteCache = new SpriteCache(style);
 
+        _carByModelId.Clear();
+        foreach (var c in style.Cars) _carByModelId[c.ModelId] = c;
+
         AtlasTexture.Upload(_atlasTex, _atlas);
         RebuildMesh();
     }
@@ -141,7 +146,11 @@ public sealed class MapView2D : IMapView
 
     public void RebuildMesh()
     {
-        if (_map is null || _atlas is null) { _tileVertexCount = 0; return; }
+        if (_map is null || _atlas is null || _style is null) { _tileVertexCount = 0; return; }
+
+        // CMP block.Lid is a 1-based index into the LID tile section. The atlas
+        // is laid out [side|lid|aux], so the actual atlas tile is sideCount + lid - 1.
+        int sideCount = _style.SideTileCount;
 
         var verts = new List<float>(GameConfig.MapWidth * GameConfig.MapHeight * 24);
         for (int y = 0; y < GameConfig.MapHeight; y++)
@@ -149,10 +158,12 @@ public sealed class MapView2D : IMapView
         {
             var top = FindTopLid(_map, x, y);
             if (top is null) continue;
-            int lid = top.Lid;
-            if (lid <= 0 || lid >= _atlas.TileCount) continue;
+            int lidByte = top.Lid;
+            if (lidByte == 0) continue;
+            int atlasIdx = sideCount + lidByte - 1;
+            if (atlasIdx < 0 || atlasIdx >= _atlas.TileCount) continue;
 
-            var uv = _atlas.GetUv(lid);
+            var uv = _atlas.GetUv(atlasIdx);
             float x0 = x, y0 = y, x1 = x + 1, y1 = y + 1;
             var nw = new Vector2(uv.u0, uv.v0);
             var ne = new Vector2(uv.u1, uv.v0);
@@ -296,18 +307,22 @@ public sealed class MapView2D : IMapView
         GL.Uniform1(_tileShader.GetUniform("uTex"), 0);
         GL.BindVertexArray(_spriteVao);
 
-        // Cars first so objects appear on top of them when overlapping
-        // (matches in-engine z-order for parking lots / props on roads).
+        // Cars: CMP CarPosition.Type is a car_info.ModelId, NOT an array index.
+        // Look up by modelId so the right vehicle renders. Cars first so objects
+        // appear on top when overlapping (matches in-engine z-order).
         foreach (var car in _map.CarPositions)
         {
-            if (car.Type >= _style.Cars.Count) continue;
-            int spriteIdx = SpriteRenderer.GetCarSpriteIndex(_style, _style.Cars[car.Type]);
+            if (!_carByModelId.TryGetValue(car.Type, out var carInfo)) continue;
+            int spriteIdx = SpriteRenderer.GetCarSpriteIndex(_style, carInfo);
             DrawEntitySprite(spriteIdx, car.X, car.Y, car.Rotation);
         }
+        // Objects: object_info.BaseSprite is relative to the Object sprite
+        // category. Need CategoryBase(Object) + BaseSprite for global index.
+        int objectBase = SpriteRenderer.CategoryBase(_style, SpriteCategory.Object);
         foreach (var obj in _map.Objects)
         {
             if (obj.Type >= _style.Objects.Count) continue;
-            int spriteIdx = _style.Objects[obj.Type].BaseSprite;
+            int spriteIdx = objectBase + _style.Objects[obj.Type].BaseSprite;
             DrawEntitySprite(spriteIdx, obj.X, obj.Y, obj.Rotation);
         }
     }
