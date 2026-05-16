@@ -4,32 +4,50 @@ using GTA1MapEditor.Core.Models;
 namespace GTA1MapEditor.App;
 
 /// <summary>
-/// Modal: choose a car_info entry, HLS remap (0-11), and rotation for the
-/// next PlaceCar click. Shows a live sprite preview using the car's
-/// computed global sprite index. Layout uses TableLayoutPanel so neither
-/// pane collapses regardless of form size.
+/// Picker for car_info entry, HLS remap (0-11), and rotation. Two flavours:
+/// <list type="bullet">
+///   <item><description><b>Modal</b> (default): OK/Cancel; caller reads <see cref="Result"/>. Used for editing a specific car instance.</description></item>
+///   <item><description><b>Modeless</b> palette: set <see cref="LiveApply"/> before showing. Selection and field edits fire the callback live so the user can keep clicking the map between picks. Buttons collapse to a single Close.</description></item>
+/// </list>
 /// </summary>
 public sealed class CarPickerForm : Form
 {
     public CarTemplate Result { get; private set; }
 
+    /// <summary>When non-null, the form runs in modeless palette mode and fires this on every change.</summary>
+    public Action<CarTemplate>? LiveApply { get; set; }
+
     private readonly G24StyleData _style;
+    private readonly bool _modeless;
     private readonly ListBox _list = new() { Dock = DockStyle.Fill, IntegralHeight = false };
     private readonly NumericUpDown _remap = new() { Minimum = 0, Maximum = 11, Width = 80 };
     private readonly NumericUpDown _rotation = new() { Minimum = 0, Maximum = 1023, Width = 80 };
     private readonly Label _details = new() { Dock = DockStyle.Fill, AutoEllipsis = true, Padding = new Padding(6, 6, 6, 0), TextAlign = ContentAlignment.TopLeft };
     private readonly PixelPictureBox _preview = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(30, 30, 30) };
     private Bitmap? _previewBitmap;
+    private bool _ready;
 
-    public CarPickerForm(G24StyleData style, CarTemplate initial)
+    public CarPickerForm(G24StyleData style, CarTemplate initial, bool modeless = false)
     {
         _style = style;
-        Text = "Pick Car";
+        _modeless = modeless;
+        Text = modeless ? "Car Palette" : "Pick Car";
         Width = 980;
         Height = 580;
         MinimumSize = new Size(720, 480);
-        StartPosition = FormStartPosition.CenterParent;
-        FormBorderStyle = FormBorderStyle.Sizable;
+        if (modeless)
+        {
+            FormBorderStyle = FormBorderStyle.SizableToolWindow;
+            StartPosition = FormStartPosition.Manual;
+            ShowInTaskbar = false;
+            var work = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+            Location = new Point(Math.Max(0, work.Right - Width - 20), work.Top + 80);
+        }
+        else
+        {
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.Sizable;
+        }
         Result = new CarTemplate { Type = initial.Type, Remap = initial.Remap, Rotation = initial.Rotation };
 
         for (int i = 0; i < style.Cars.Count; i++)
@@ -44,11 +62,25 @@ public sealed class CarPickerForm : Form
         _remap.Value = initial.Remap;
         _rotation.Value = initial.Rotation;
 
-        _list.SelectedIndexChanged += (_, _) => UpdatePreview();
-        _remap.ValueChanged += (_, _) => UpdatePreview();
+        _list.SelectedIndexChanged += (_, _) => { UpdatePreview(); FireLive(); };
+        _remap.ValueChanged += (_, _) => { UpdatePreview(); FireLive(); };
+        _rotation.ValueChanged += (_, _) => FireLive();
         UpdatePreview();
 
         Controls.Add(BuildLayout());
+        _ready = true;
+    }
+
+    private void FireLive()
+    {
+        if (!_modeless || !_ready) return;
+        Result = new CarTemplate
+        {
+            Type = (byte)Math.Max(0, _list.SelectedIndex),
+            Remap = (byte)_remap.Value,
+            Rotation = (ushort)_rotation.Value,
+        };
+        LiveApply?.Invoke(Result);
     }
 
     private Control BuildLayout()
@@ -78,22 +110,31 @@ public sealed class CarPickerForm : Form
         bottom.Controls.Add(fields, 0, 0);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8) };
-        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Width = 80 };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 80 };
-        ok.Click += (_, _) =>
+        if (_modeless)
         {
-            Result = new CarTemplate
+            var close = new Button { Text = "Close", Width = 80 };
+            close.Click += (_, _) => Close();
+            buttons.Controls.Add(close);
+            CancelButton = close;
+        }
+        else
+        {
+            var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Width = 80 };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 80 };
+            ok.Click += (_, _) =>
             {
-                Type = (byte)Math.Max(0, _list.SelectedIndex),
-                Remap = (byte)_remap.Value,
-                Rotation = (ushort)_rotation.Value,
+                Result = new CarTemplate
+                {
+                    Type = (byte)Math.Max(0, _list.SelectedIndex),
+                    Remap = (byte)_remap.Value,
+                    Rotation = (ushort)_rotation.Value,
+                };
             };
-        };
-        buttons.Controls.Add(ok);
-        buttons.Controls.Add(cancel);
-        bottom.Controls.Add(buttons, 1, 0);
-        AcceptButton = ok;
-        CancelButton = cancel;
+            buttons.Controls.Add(ok);
+            buttons.Controls.Add(cancel);
+            AcceptButton = ok;
+            CancelButton = cancel;
+        }
 
         root.Controls.Add(bottom, 0, 1);
         root.SetColumnSpan(bottom, 2);

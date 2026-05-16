@@ -4,31 +4,54 @@ using GTA1MapEditor.Core.Models;
 namespace GTA1MapEditor.App;
 
 /// <summary>
-/// Modal: choose an object_info entry, remap, and rotation for the next
-/// PlaceObject click. Shows a live sprite preview decoded from the loaded
-/// style. Layout uses TableLayoutPanel so neither pane ever collapses.
+/// Picker for object_info entry, remap, and rotation. Two flavours:
+/// <list type="bullet">
+///   <item><description><b>Modal</b> (default): OK/Cancel buttons; caller reads <see cref="Result"/>. Used for editing a specific object instance.</description></item>
+///   <item><description><b>Modeless</b> palette: set <see cref="LiveApply"/> before showing. Selection and field edits fire the callback live so the user can keep clicking the map between picks. Buttons collapse to a single Close.</description></item>
+/// </list>
+/// Layout uses TableLayoutPanel so neither pane ever collapses.
 /// </summary>
 public sealed class ObjectPickerForm : Form
 {
     public ObjectTemplate Result { get; private set; }
 
+    /// <summary>When non-null, the form runs in modeless palette mode and fires this on every change.</summary>
+    public Action<ObjectTemplate>? LiveApply { get; set; }
+
     private readonly G24StyleData _style;
+    private readonly int _objectSpriteBase;
+    private readonly bool _modeless;
     private readonly ListBox _list = new() { Dock = DockStyle.Fill, IntegralHeight = false };
     private readonly NumericUpDown _remap = new() { Minimum = 0, Maximum = 255, Width = 80 };
     private readonly NumericUpDown _rotation = new() { Minimum = 0, Maximum = 1023, Width = 80 };
     private readonly Label _details = new() { Dock = DockStyle.Fill, AutoEllipsis = true, Padding = new Padding(6, 6, 6, 0), TextAlign = ContentAlignment.TopLeft };
     private readonly PixelPictureBox _preview = new() { Dock = DockStyle.Fill, BackColor = Color.FromArgb(30, 30, 30) };
     private Bitmap? _previewBitmap;
+    private bool _ready;
 
-    public ObjectPickerForm(G24StyleData style, ObjectTemplate initial)
+    public ObjectPickerForm(G24StyleData style, ObjectTemplate initial, bool modeless = false)
     {
         _style = style;
-        Text = "Pick Object";
+        _objectSpriteBase = SpriteRenderer.CategoryBase(style, SpriteCategory.Object);
+        _modeless = modeless;
+        Text = modeless ? "Object Palette" : "Pick Object";
         Width = 980;
         Height = 560;
         MinimumSize = new Size(720, 460);
-        StartPosition = FormStartPosition.CenterParent;
-        FormBorderStyle = FormBorderStyle.Sizable;
+        if (modeless)
+        {
+            // Palette-style: floats over the main form, doesn't steal focus from the map.
+            FormBorderStyle = FormBorderStyle.SizableToolWindow;
+            StartPosition = FormStartPosition.Manual;
+            ShowInTaskbar = false;
+            var work = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+            Location = new Point(Math.Max(0, work.Right - Width - 20), work.Top + 80);
+        }
+        else
+        {
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.Sizable;
+        }
         Result = new ObjectTemplate { Type = initial.Type, Remap = initial.Remap, Rotation = initial.Rotation };
 
         for (int i = 0; i < style.Objects.Count; i++)
@@ -42,10 +65,25 @@ public sealed class ObjectPickerForm : Form
         _remap.Value = initial.Remap;
         _rotation.Value = initial.Rotation;
 
-        _list.SelectedIndexChanged += (_, _) => UpdatePreview();
+        _list.SelectedIndexChanged += (_, _) => { UpdatePreview(); FireLive(); };
+        _remap.ValueChanged += (_, _) => FireLive();
+        _rotation.ValueChanged += (_, _) => FireLive();
         UpdatePreview();
 
         Controls.Add(BuildLayout());
+        _ready = true;
+    }
+
+    private void FireLive()
+    {
+        if (!_modeless || !_ready) return;
+        Result = new ObjectTemplate
+        {
+            Type = (byte)Math.Max(0, _list.SelectedIndex),
+            Remap = (byte)_remap.Value,
+            Rotation = (ushort)_rotation.Value,
+        };
+        LiveApply?.Invoke(Result);
     }
 
     private Control BuildLayout()
@@ -78,22 +116,31 @@ public sealed class ObjectPickerForm : Form
         bottom.Controls.Add(fields, 0, 0);
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, Padding = new Padding(8) };
-        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Width = 80 };
-        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 80 };
-        ok.Click += (_, _) =>
+        if (_modeless)
         {
-            Result = new ObjectTemplate
+            var close = new Button { Text = "Close", Width = 80 };
+            close.Click += (_, _) => Close();
+            buttons.Controls.Add(close);
+            CancelButton = close;
+        }
+        else
+        {
+            var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Width = 80 };
+            var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Width = 80 };
+            ok.Click += (_, _) =>
             {
-                Type = (byte)Math.Max(0, _list.SelectedIndex),
-                Remap = (byte)_remap.Value,
-                Rotation = (ushort)_rotation.Value,
+                Result = new ObjectTemplate
+                {
+                    Type = (byte)Math.Max(0, _list.SelectedIndex),
+                    Remap = (byte)_remap.Value,
+                    Rotation = (ushort)_rotation.Value,
+                };
             };
-        };
-        buttons.Controls.Add(ok);
-        buttons.Controls.Add(cancel);
-        bottom.Controls.Add(buttons, 1, 0);
-        AcceptButton = ok;
-        CancelButton = cancel;
+            buttons.Controls.Add(ok);
+            buttons.Controls.Add(cancel);
+            AcceptButton = ok;
+            CancelButton = cancel;
+        }
 
         root.Controls.Add(bottom, 0, 1);
         root.SetColumnSpan(bottom, 2);
@@ -112,7 +159,11 @@ public sealed class ObjectPickerForm : Form
         _details.Text = $"Object #{i}    BaseSprite #{o.BaseSprite}    Aux: {o.Aux}    Status: {o.Status}\n" +
                         $"Dimensions: {o.Width}×{o.Height}×{o.Depth} px    Weight: {o.Weight}";
 
-        var rgba = SpriteRenderer.DecodeSprite(_style, o.BaseSprite, out int w, out int h);
+        // object_info.BaseSprite is local to the Object category; the global
+        // index must add the category base or the preview shows a different
+        // sprite than the one MapView2D actually places.
+        int globalSprite = _objectSpriteBase + o.BaseSprite;
+        var rgba = SpriteRenderer.DecodeSprite(_style, globalSprite, out int w, out int h);
         if (rgba is null) return;
         _previewBitmap = TilePickerForm_Helpers.RgbaToBitmap(rgba, w, h);
         _preview.Image = _previewBitmap;

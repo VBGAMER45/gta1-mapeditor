@@ -61,14 +61,33 @@ public sealed class EditorState
     public ToolMode Tool { get; private set; } = ToolMode.Select;
     public ViewMode View { get; private set; } = ViewMode.TopDown;
 
-    /// <summary>Tile index in use as the paint brush (lid only for now).</summary>
-    public int PaintTile { get; set; } = 1;
+    private int _paintTile = 1;
+    private ObjectTemplate _objectTemplate = new();
+    private CarTemplate _carTemplate = new();
 
-    /// <summary>Template applied when dropping an object in PlaceObject mode.</summary>
-    public ObjectTemplate ObjectTemplate { get; set; } = new();
+    /// <summary>
+    /// Tile index in use as the paint brush (lid only for now). Setter raises
+    /// ToolChanged so toolbar/status labels reflect the new brush.
+    /// </summary>
+    public int PaintTile
+    {
+        get => _paintTile;
+        set { if (_paintTile == value) return; _paintTile = value; ToolChanged?.Invoke(); }
+    }
 
-    /// <summary>Template applied when dropping a car spawn in PlaceCar mode.</summary>
-    public CarTemplate CarTemplate { get; set; } = new();
+    /// <summary>Template applied when dropping an object in PlaceObject mode. Setter raises ToolChanged.</summary>
+    public ObjectTemplate ObjectTemplate
+    {
+        get => _objectTemplate;
+        set { _objectTemplate = value; ToolChanged?.Invoke(); }
+    }
+
+    /// <summary>Template applied when dropping a car spawn in PlaceCar mode. Setter raises ToolChanged.</summary>
+    public CarTemplate CarTemplate
+    {
+        get => _carTemplate;
+        set { _carTemplate = value; ToolChanged?.Invoke(); }
+    }
 
     /// <summary>Type stamped onto every spawn dropped in PlaceSpawn mode.</summary>
     public SpawnLocationType SpawnType { get; set; } = SpawnLocationType.Police;

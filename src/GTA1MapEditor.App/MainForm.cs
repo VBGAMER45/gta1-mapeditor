@@ -25,6 +25,9 @@ public sealed class MainForm : Form
     private ToolStripMenuItem _trafficArrowsItem = null!;
 
     private TileAttributesForm? _attributesForm;
+    private ObjectPickerForm? _objectPalette;
+    private CarPickerForm? _carPalette;
+    private LidPaintPickerForm? _lidPalette;
     private readonly MapListsPanel _listsPanel;
     private readonly Panel _viewContainer = new() { Dock = DockStyle.Fill };
     private readonly HScrollBar _hScroll = new() { Dock = DockStyle.Bottom };
@@ -67,7 +70,7 @@ public sealed class MainForm : Form
         _viewControl.ObjectEditRequested += OpenObjectInstanceEditor;
         _viewControl.CarEditRequested += OpenCarInstanceEditor;
         _viewControl.CameraChanged += SyncScrollbars;
-        _state.MapLoaded += () => { UpdateMapLabel(); UpdateCommandUi(); SyncScrollbars(); RebuildRecentMenu(); };
+        _state.MapLoaded += () => { UpdateMapLabel(); UpdateCommandUi(); SyncScrollbars(); RebuildRecentMenu(); RebindOpenPalettes(); };
         _state.ViewModeChanged += () => { UpdateViewModeUi(); SyncScrollbars(); UpdateScrollbarVisibility(); };
         _state.MapEdited += UpdateMapLabel;
         _state.CommandsChanged += UpdateCommandUi;
@@ -138,8 +141,9 @@ public sealed class MainForm : Form
         tools.DropDownItems.Add(MakeItem("Place S&pawn (T)…", Keys.None, (_, _) => EnterPlaceSpawnTool()));
         tools.DropDownItems.Add(MakeItem("&Eraser (E)", Keys.None, (_, _) => _state.SetTool(ToolMode.Erase)));
         tools.DropDownItems.Add(new ToolStripSeparator());
-        tools.DropDownItems.Add(MakeItem("Configure &Object template…", Keys.None, (_, _) => OpenObjectPicker()));
-        tools.DropDownItems.Add(MakeItem("Configure C&ar template…", Keys.None, (_, _) => OpenCarPicker()));
+        tools.DropDownItems.Add(MakeItem("&Lid brush palette… (L)", Keys.None, (_, _) => OpenLidPalette()));
+        tools.DropDownItems.Add(MakeItem("Configure &Object palette…", Keys.None, (_, _) => OpenObjectPicker()));
+        tools.DropDownItems.Add(MakeItem("Configure C&ar palette…", Keys.None, (_, _) => OpenCarPicker()));
 
         var help = new ToolStripMenuItem("&Help");
         help.DropDownItems.Add(MakeItem("&About", Keys.None, (_, _) =>
@@ -172,7 +176,11 @@ public sealed class MainForm : Form
         bar.Items.Add(new ToolStripSeparator());
 
         AddToolButton(bar, "Select", ToolMode.Select);
-        AddToolButton(bar, "Paint", ToolMode.PaintLid);
+        var paintBtn = new ToolStripButton("Paint", null, (_, _) => OpenLidPalette());
+        _state.ToolChanged += () => paintBtn.Checked = _state.Tool == ToolMode.PaintLid;
+        bar.Items.Add(paintBtn);
+        var lidBtn = new ToolStripButton("Lid…", null, (_, _) => OpenLidPalette());
+        bar.Items.Add(lidBtn);
         var objBtn = new ToolStripButton("Object", null, (_, _) => EnterPlaceObjectTool());
         _state.ToolChanged += () => objBtn.Checked = _state.Tool == ToolMode.PlaceObject;
         bar.Items.Add(objBtn);
@@ -431,6 +439,10 @@ public sealed class MainForm : Form
         _toolLabel.Text = $"Tool: {_state.Tool}";
         if (_state.Tool == ToolMode.PlaceObject) _toolLabel.Text += $"  (#{_state.ObjectTemplate.Type})";
         else if (_state.Tool == ToolMode.PlaceCar) _toolLabel.Text += $"  (#{_state.CarTemplate.Type})";
+        else if (_state.Tool == ToolMode.PaintLid) _toolLabel.Text += $"  (lid {_state.PaintTile})";
+        // Keep the lid palette's highlighted cell in sync when right-click sampling on the map changes PaintTile.
+        if (_lidPalette is not null && !_lidPalette.IsDisposed)
+            _lidPalette.SyncSelection(_state.PaintTile);
     }
 
     private void UpdateViewModeUi()
@@ -447,23 +459,9 @@ public sealed class MainForm : Form
         _trafficArrowsItem.Checked = _state.ShowTrafficArrows;
     }
 
-    private void EnterPlaceObjectTool()
-    {
-        if (_state.Style is null) return;
-        using var dlg = new ObjectPickerForm(_state.Style, _state.ObjectTemplate);
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
-        _state.ObjectTemplate = dlg.Result;
-        _state.SetTool(ToolMode.PlaceObject);
-    }
+    private void EnterPlaceObjectTool() => OpenObjectPicker();
 
-    private void EnterPlaceCarTool()
-    {
-        if (_state.Style is null) return;
-        using var dlg = new CarPickerForm(_state.Style, _state.CarTemplate);
-        if (dlg.ShowDialog(this) != DialogResult.OK) return;
-        _state.CarTemplate = dlg.Result;
-        _state.SetTool(ToolMode.PlaceCar);
-    }
+    private void EnterPlaceCarTool() => OpenCarPicker();
 
     private void EnterPlaceSpawnTool()
     {
@@ -503,20 +501,94 @@ public sealed class MainForm : Form
         _state.ExecuteCommand(new EditCarCommand(car, before, after));
     }
 
+    /// <summary>
+    /// Open (or refocus) the modeless object palette. Selecting an object in
+    /// the list live-binds <see cref="EditorState.ObjectTemplate"/> and puts
+    /// the editor in <see cref="ToolMode.PlaceObject"/> so the user can keep
+    /// clicking the map between picks.
+    /// </summary>
     private void OpenObjectPicker()
     {
         if (_state.Style is null) return;
-        using var dlg = new ObjectPickerForm(_state.Style, _state.ObjectTemplate);
-        if (dlg.ShowDialog(this) == DialogResult.OK)
-            _state.ObjectTemplate = dlg.Result;
+        if (_objectPalette is null || _objectPalette.IsDisposed)
+        {
+            _objectPalette = new ObjectPickerForm(_state.Style, _state.ObjectTemplate, modeless: true);
+            _objectPalette.LiveApply = t =>
+            {
+                _state.ObjectTemplate = t;
+                _state.SetTool(ToolMode.PlaceObject);
+            };
+            _objectPalette.FormClosed += (_, _) => _objectPalette = null;
+            _objectPalette.Show(this);
+        }
+        else
+        {
+            _objectPalette.BringToFront();
+        }
+        _state.SetTool(ToolMode.PlaceObject);
     }
 
+    /// <summary>Modeless car palette. Same live-binding contract as <see cref="OpenObjectPicker"/>.</summary>
     private void OpenCarPicker()
     {
         if (_state.Style is null) return;
-        using var dlg = new CarPickerForm(_state.Style, _state.CarTemplate);
-        if (dlg.ShowDialog(this) == DialogResult.OK)
-            _state.CarTemplate = dlg.Result;
+        if (_carPalette is null || _carPalette.IsDisposed)
+        {
+            _carPalette = new CarPickerForm(_state.Style, _state.CarTemplate, modeless: true);
+            _carPalette.LiveApply = t =>
+            {
+                _state.CarTemplate = t;
+                _state.SetTool(ToolMode.PlaceCar);
+            };
+            _carPalette.FormClosed += (_, _) => _carPalette = null;
+            _carPalette.Show(this);
+        }
+        else
+        {
+            _carPalette.BringToFront();
+        }
+        _state.SetTool(ToolMode.PlaceCar);
+    }
+
+    /// <summary>Modeless lid-brush palette. Clicking a cell sets <see cref="EditorState.PaintTile"/> and switches to <see cref="ToolMode.PaintLid"/>.</summary>
+    private void OpenLidPalette()
+    {
+        if (_state.Atlas is null || _state.Style is null) return;
+        if (_lidPalette is null || _lidPalette.IsDisposed)
+        {
+            _lidPalette = new LidPaintPickerForm(_state.Atlas,
+                _state.Style.SideTileCount, _state.Style.LidTileCount, _state.PaintTile);
+            _lidPalette.LidChosen += lid =>
+            {
+                _state.PaintTile = lid;
+                _state.SetTool(ToolMode.PaintLid);
+            };
+            _lidPalette.FormClosed += (_, _) => _lidPalette = null;
+            _lidPalette.Show(this);
+        }
+        else
+        {
+            _lidPalette.BringToFront();
+        }
+        _state.SetTool(ToolMode.PaintLid);
+    }
+
+    /// <summary>
+    /// Refresh the atlas inside the lid palette (and lazily close stale entity
+    /// palettes) when a new map/style loads — the open palette would otherwise
+    /// still display tiles from the previous style.
+    /// </summary>
+    private void RebindOpenPalettes()
+    {
+        if (_lidPalette is not null && !_lidPalette.IsDisposed && _state.Atlas is not null && _state.Style is not null)
+        {
+            _lidPalette.SetAtlas(_state.Atlas, _state.Style.SideTileCount, _state.Style.LidTileCount);
+            _lidPalette.SyncSelection(_state.PaintTile);
+        }
+        // Object/Car palettes hold style refs internally; reopen against the
+        // new style by closing them — the user can hit O/C/L to bring them back.
+        if (_objectPalette is not null && !_objectPalette.IsDisposed) _objectPalette.Close();
+        if (_carPalette is not null && !_carPalette.IsDisposed) _carPalette.Close();
     }
 
     private void OpenAttributesPanel()
@@ -558,6 +630,7 @@ public sealed class MainForm : Form
         {
             case Keys.S: _state.SetTool(ToolMode.Select); e.Handled = true; break;
             case Keys.P: _state.SetTool(ToolMode.PaintLid); e.Handled = true; break;
+            case Keys.L: OpenLidPalette(); e.Handled = true; break;
             case Keys.O: EnterPlaceObjectTool(); e.Handled = true; break;
             case Keys.C: EnterPlaceCarTool(); e.Handled = true; break;
             case Keys.T: EnterPlaceSpawnTool(); e.Handled = true; break;
