@@ -439,10 +439,13 @@ public sealed class MainForm : Form
         _toolLabel.Text = $"Tool: {_state.Tool}";
         if (_state.Tool == ToolMode.PlaceObject) _toolLabel.Text += $"  (#{_state.ObjectTemplate.Type})";
         else if (_state.Tool == ToolMode.PlaceCar) _toolLabel.Text += $"  (#{_state.CarTemplate.Type})";
-        else if (_state.Tool == ToolMode.PaintLid) _toolLabel.Text += $"  (lid {_state.PaintTile})";
-        // Keep the lid palette's highlighted cell in sync when right-click sampling on the map changes PaintTile.
+        else if (_state.Tool == ToolMode.PaintLid) _toolLabel.Text += $"  (lid {_state.PaintTile}, rot {_state.PaintRotation * 90}°)";
+        // Keep the lid palette in sync when right-click sampling on the map changes PaintTile/PaintRotation.
         if (_lidPalette is not null && !_lidPalette.IsDisposed)
+        {
             _lidPalette.SyncSelection(_state.PaintTile);
+            _lidPalette.SyncRotation(_state.PaintRotation);
+        }
     }
 
     private void UpdateViewModeUi()
@@ -550,17 +553,23 @@ public sealed class MainForm : Form
         _state.SetTool(ToolMode.PlaceCar);
     }
 
-    /// <summary>Modeless lid-brush palette. Clicking a cell sets <see cref="EditorState.PaintTile"/> and switches to <see cref="ToolMode.PaintLid"/>.</summary>
+    /// <summary>Modeless lid-brush palette. Clicking a cell sets <see cref="EditorState.PaintTile"/> and switches to <see cref="ToolMode.PaintLid"/>. The rotation radios drive <see cref="EditorState.PaintRotation"/>.</summary>
     private void OpenLidPalette()
     {
         if (_state.Atlas is null || _state.Style is null) return;
         if (_lidPalette is null || _lidPalette.IsDisposed)
         {
             _lidPalette = new LidPaintPickerForm(_state.Atlas,
-                _state.Style.SideTileCount, _state.Style.LidTileCount, _state.PaintTile);
+                _state.Style.SideTileCount, _state.Style.LidTileCount,
+                _state.PaintTile, _state.PaintRotation);
             _lidPalette.LidChosen += lid =>
             {
                 _state.PaintTile = lid;
+                _state.SetTool(ToolMode.PaintLid);
+            };
+            _lidPalette.RotationChosen += rot =>
+            {
+                _state.PaintRotation = (byte)rot;
                 _state.SetTool(ToolMode.PaintLid);
             };
             _lidPalette.FormClosed += (_, _) => _lidPalette = null;

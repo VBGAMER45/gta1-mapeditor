@@ -13,22 +13,30 @@ public sealed class LidPaintPickerForm : Form
     /// <summary>1-based section-relative lid index (matches BlockInfo.Lid); 0 = no texture.</summary>
     public int SelectedLid { get; private set; }
 
+    /// <summary>Brush rotation in 0-3 quarter-turn steps.</summary>
+    public int SelectedRotation { get; private set; }
+
     /// <summary>Fires every time the user clicks a cell.</summary>
     public event Action<int>? LidChosen;
 
+    /// <summary>Fires when the rotation control changes.</summary>
+    public event Action<int>? RotationChosen;
+
     private readonly Panel _scroll = new() { Dock = DockStyle.Fill, AutoScroll = true };
     private readonly ToolStripStatusLabel _statusLabel = new() { Text = "" };
+    private readonly RadioButton[] _rotRadios = new RadioButton[4];
     private Bitmap _atlasBitmap;
     private int _sectionStart;
     private int _sectionCount;
+    private bool _suppressRotationEvent;
     private const int CellSize = 48;
     private const int Columns = 16;
 
-    public LidPaintPickerForm(TileAtlas atlas, int sideCount, int lidCount, int initialLid)
+    public LidPaintPickerForm(TileAtlas atlas, int sideCount, int lidCount, int initialLid, int initialRotation = 0)
     {
         Text = "Lid Brush";
         Width = Columns * CellSize + 64;
-        Height = 600;
+        Height = 640;
         FormBorderStyle = FormBorderStyle.SizableToolWindow;
         StartPosition = FormStartPosition.Manual;
         ShowInTaskbar = false;
@@ -36,9 +44,43 @@ public sealed class LidPaintPickerForm : Form
         Location = new Point(Math.Max(0, work.Right - Width - 20), work.Top + 80);
 
         SelectedLid = initialLid;
+        SelectedRotation = initialRotation & 3;
         _sectionStart = sideCount;
         _sectionCount = lidCount;
         _atlasBitmap = TilePickerForm_Helpers.AtlasToBitmap(atlas);
+
+        // Rotation toolbar across the top — 0°/90°/180°/270° quarter-turn picks,
+        // applied to the block's TypeMap rotation field when painting.
+        var rotBar = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Top, AutoSize = true,
+            FlowDirection = FlowDirection.LeftToRight,
+            Padding = new Padding(6, 4, 6, 4),
+        };
+        rotBar.Controls.Add(new Label { Text = "Rotation:", AutoSize = true, Margin = new Padding(0, 4, 8, 0) });
+        string[] labels = { "0°", "90°", "180°", "270°" };
+        for (int i = 0; i < 4; i++)
+        {
+            int idx = i;
+            var rb = new RadioButton
+            {
+                Text = labels[i], AutoSize = true,
+                Appearance = Appearance.Button,
+                Margin = new Padding(2),
+                MinimumSize = new Size(48, 24),
+                TextAlign = ContentAlignment.MiddleCenter,
+                Checked = i == SelectedRotation,
+            };
+            rb.CheckedChanged += (_, _) =>
+            {
+                if (_suppressRotationEvent || !rb.Checked) return;
+                SelectedRotation = idx;
+                RotationChosen?.Invoke(idx);
+            };
+            _rotRadios[i] = rb;
+            rotBar.Controls.Add(rb);
+        }
+        Controls.Add(rotBar);
 
         _scroll.Paint += DrawGrid;
         _scroll.MouseClick += OnPick;
@@ -79,6 +121,17 @@ public sealed class LidPaintPickerForm : Form
         SelectedLid = lidIndex;
         _statusLabel.Text = lidIndex == 0 ? "Lid 0 (no texture)" : $"Lid {lidIndex}";
         _scroll.Invalidate();
+    }
+
+    /// <summary>Update the checked rotation radio without firing RotationChosen.</summary>
+    public void SyncRotation(int rotation)
+    {
+        rotation &= 3;
+        if (SelectedRotation == rotation) return;
+        SelectedRotation = rotation;
+        _suppressRotationEvent = true;
+        try { _rotRadios[rotation].Checked = true; }
+        finally { _suppressRotationEvent = false; }
     }
 
     private void DrawGrid(object? sender, PaintEventArgs e)

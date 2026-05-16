@@ -62,6 +62,7 @@ public sealed class EditorState
     public ViewMode View { get; private set; } = ViewMode.TopDown;
 
     private int _paintTile = 1;
+    private byte _paintRotation;
     private ObjectTemplate _objectTemplate = new();
     private CarTemplate _carTemplate = new();
 
@@ -73,6 +74,17 @@ public sealed class EditorState
     {
         get => _paintTile;
         set { if (_paintTile == value) return; _paintTile = value; ToolChanged?.Invoke(); }
+    }
+
+    /// <summary>
+    /// Quarter-turn rotation (0-3) applied to the block when painting a lid.
+    /// Maps to <see cref="BlockRotation"/>. Setter raises ToolChanged so the
+    /// status bar reflects the active brush.
+    /// </summary>
+    public byte PaintRotation
+    {
+        get => _paintRotation;
+        set { value &= 3; if (_paintRotation == value) return; _paintRotation = value; ToolChanged?.Invoke(); }
     }
 
     /// <summary>Template applied when dropping an object in PlaceObject mode. Setter raises ToolChanged.</summary>

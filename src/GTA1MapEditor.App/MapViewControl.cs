@@ -295,11 +295,20 @@ public sealed class MapViewControl : GLControl
         {
             case ToolMode.PaintLid:
                 {
+                    // Right-click samples the topmost-with-lid block: copy its
+                    // lid AND its rotation into the brush so painting back
+                    // produces an exact match.
                     var stack = _state.Map?.GetBlockStack(tx, ty);
                     if (stack is { Count: > 0 })
                     {
-                        var top = stack[^1];
-                        if (top.Lid > 0) _state.PaintTile = top.Lid;
+                        var pick = stack[^1];
+                        for (int i = stack.Count - 1; i >= 0; i--)
+                            if (stack[i].Lid != 0) { pick = stack[i]; break; }
+                        if (pick.Lid > 0)
+                        {
+                            _state.PaintTile = pick.Lid;
+                            _state.PaintRotation = (byte)pick.Rotation;
+                        }
                     }
                     break;
                 }
@@ -357,8 +366,13 @@ public sealed class MapViewControl : GLControl
         for (int i = stack.Count - 1; i >= 0; i--)
             if (stack[i].Lid != 0) { topZ = i; break; }
         var before = BlockEditCommand.Capture(stack[topZ]);
-        if (before.Lid == _state.PaintTile) return;
-        var after = before with { Lid = (byte)_state.PaintTile };
+        // Apply the brush's rotation alongside the lid texture. Rotation lives
+        // in the top 2 bits of TypeMap, so use a probe BlockInfo to compute
+        // the new TypeMap value cleanly via the existing accessor.
+        var probe = new BlockInfo { TypeMap = before.TypeMap, TypeMapExt = before.TypeMapExt };
+        probe.Rotation = (BlockRotation)(_state.PaintRotation & 3);
+        var after = before with { Lid = (byte)_state.PaintTile, TypeMap = probe.TypeMap };
+        if (after.Equals(before)) return;
         _state.ExecuteCommand(new BlockEditCommand(tx, ty, topZ, before, after));
     }
 

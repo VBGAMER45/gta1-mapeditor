@@ -56,7 +56,14 @@ public sealed class CarPickerForm : Form
             var cls = (VehicleClass)c.VehicleType;
             _list.Items.Add($"#{i}  {cls}  model={c.ModelId}  {c.Width}×{c.Height}  v={c.MaxSpeed}");
         }
-        if (initial.Type < _list.Items.Count) _list.SelectedIndex = initial.Type;
+        // CarPosition.Type / CarTemplate.Type is a ModelId, NOT a list index —
+        // car_info entries are not stored in ModelId order. Find the list row
+        // whose ModelId matches the incoming template so the preview and the
+        // car that actually gets placed are the same vehicle.
+        int initialIdx = -1;
+        for (int i = 0; i < style.Cars.Count; i++)
+            if (style.Cars[i].ModelId == initial.Type) { initialIdx = i; break; }
+        if (initialIdx >= 0) _list.SelectedIndex = initialIdx;
         else if (_list.Items.Count > 0) _list.SelectedIndex = 0;
 
         _remap.Value = initial.Remap;
@@ -76,11 +83,19 @@ public sealed class CarPickerForm : Form
         if (!_modeless || !_ready) return;
         Result = new CarTemplate
         {
-            Type = (byte)Math.Max(0, _list.SelectedIndex),
+            Type = SelectedModelId(),
             Remap = (byte)_remap.Value,
             Rotation = (ushort)_rotation.Value,
         };
         LiveApply?.Invoke(Result);
+    }
+
+    /// <summary>ModelId of the selected list row — this is what CarPosition.Type expects, not the list index.</summary>
+    private byte SelectedModelId()
+    {
+        int i = _list.SelectedIndex;
+        if (i < 0 || i >= _style.Cars.Count) return 0;
+        return _style.Cars[i].ModelId;
     }
 
     private Control BuildLayout()
@@ -125,7 +140,7 @@ public sealed class CarPickerForm : Form
             {
                 Result = new CarTemplate
                 {
-                    Type = (byte)Math.Max(0, _list.SelectedIndex),
+                    Type = SelectedModelId(),
                     Remap = (byte)_remap.Value,
                     Rotation = (ushort)_rotation.Value,
                 };
