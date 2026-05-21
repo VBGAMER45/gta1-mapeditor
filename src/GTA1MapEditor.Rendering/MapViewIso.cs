@@ -40,6 +40,7 @@ public sealed class MapViewIso : IMapView
         """;
 
     private readonly GlShader _shader;
+    private readonly EntitySpriteRenderer _entitySprites = new();
     private int _vao, _vbo;
     private int _atlasTex;
     private int _vertexCount;
@@ -66,6 +67,7 @@ public sealed class MapViewIso : IMapView
     public float ViewportHeight { get; private set; } = 1;
 
     public (int x, int y, int z)? Selection { get; set; }
+    public int MapYaw { get; set; }
     public bool UsesFlyCamera => false;
 
     public MapViewIso()
@@ -87,6 +89,7 @@ public sealed class MapViewIso : IMapView
         _map = map;
         _style = style;
         _atlas = TileAtlas.Build(style);
+        _entitySprites.SetMap(map, style);
         UploadAtlas();
         RebuildMesh();
     }
@@ -108,16 +111,28 @@ public sealed class MapViewIso : IMapView
         GL.ClearColor(0.08f, 0.08f, 0.12f, 1f);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-        if (_vertexCount == 0) return;
-
         var mvp = BuildMvp();
-        _shader.Use();
-        GL.UniformMatrix4(_shader.GetUniform("uMvp"), false, ref mvp);
-        GL.ActiveTexture(TextureUnit.Texture0);
-        GL.BindTexture(TextureTarget.Texture2D, _atlasTex);
-        GL.Uniform1(_shader.GetUniform("uTex"), 0);
-        GL.BindVertexArray(_vao);
-        GL.DrawArrays(PrimitiveType.Triangles, 0, _vertexCount);
+        if (_vertexCount > 0)
+        {
+            _shader.Use();
+            GL.UniformMatrix4(_shader.GetUniform("uMvp"), false, ref mvp);
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, _atlasTex);
+            GL.Uniform1(_shader.GetUniform("uTex"), 0);
+            GL.BindVertexArray(_vao);
+            GL.DrawArrays(PrimitiveType.Triangles, 0, _vertexCount);
+        }
+
+        // Sprites: depth-test against walls/lids (so a sprite behind a building
+        // is properly occluded) but don't WRITE depth — that lets us draw them
+        // at the exact entity Z without z-fighting the lid below, and avoids
+        // any visible vertical shift in the iso projection. Lequal so a sprite
+        // sitting flush on a lid (same z) still draws.
+        GL.DepthFunc(DepthFunction.Lequal);
+        GL.DepthMask(false);
+        _entitySprites.Render(mvp, zLift: 0f, snapToColumnTop: true);
+        GL.DepthMask(true);
+        GL.DepthFunc(DepthFunction.Less);
     }
 
     public void Resize(int width, int height)
@@ -198,6 +213,7 @@ public sealed class MapViewIso : IMapView
 
     public void Dispose()
     {
+        _entitySprites.Dispose();
         _shader.Dispose();
         GL.DeleteBuffer(_vbo);
         GL.DeleteVertexArray(_vao);
@@ -227,6 +243,8 @@ public sealed class MapViewIso : IMapView
 
         float aspect = ViewportWidth / ViewportHeight;
         var proj = Matrix4.CreateOrthographic(OrthoSize * aspect, OrthoSize, -1024, 1024);
-        return view * proj;
+        // World rotation goes first (applied to vertices before view*proj)
+        // so the shared MapYaw aligns the iso view with the other modes.
+        return WorldRotation.Build(MapYaw) * view * proj;
     }
 }

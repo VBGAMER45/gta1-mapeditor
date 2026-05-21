@@ -84,6 +84,7 @@ public sealed class MapView2D : IMapView
     public const float NativePixelsPerTile = 64f;
 
     public (int x, int y, int z)? Selection { get; set; }
+    public int MapYaw { get; set; }
 
     /// <summary>Render traffic-direction arrows on each block flagged as walkable/drivable.</summary>
     public bool ShowTrafficArrows { get; set; }
@@ -327,10 +328,13 @@ public sealed class MapView2D : IMapView
 
         float halfW = ViewportWidth * 0.5f / PixelsPerTile;
         float halfH = ViewportHeight * 0.5f / PixelsPerTile;
-        var proj = Matrix4.CreateOrthographicOffCenter(
+        var ortho = Matrix4.CreateOrthographicOffCenter(
             CameraWorld.X - halfW, CameraWorld.X + halfW,
             CameraWorld.Y + halfH, CameraWorld.Y - halfH,
             -1, 1);
+        // Rotate the world around the map center before projecting so the
+        // user-selected MapYaw is shared with iso/3D for alignment.
+        var proj = WorldRotation.Build(MapYaw) * ortho;
 
         GL.Enable(EnableCap.Blend);
         GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
@@ -454,8 +458,11 @@ public sealed class MapView2D : IMapView
     public (int x, int y)? PickTile(int screenX, int screenY)
     {
         var w = ScreenToWorld(screenX, screenY);
-        int tx = (int)Math.Floor(w.X);
-        int ty = (int)Math.Floor(w.Y);
+        // Undo the world rotation applied in Render so the result maps back
+        // to the original mesh tile coords.
+        var un = WorldRotation.InverseRotate(MapYaw, w);
+        int tx = (int)Math.Floor(un.X);
+        int ty = (int)Math.Floor(un.Y);
         if (tx < 0 || tx >= GameConfig.MapWidth || ty < 0 || ty >= GameConfig.MapHeight) return null;
         return (tx, ty);
     }

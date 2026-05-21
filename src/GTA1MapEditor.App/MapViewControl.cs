@@ -62,6 +62,11 @@ public sealed class MapViewControl : GLControl
             if (_view is MapView2D v2) v2.ShowTrafficArrows = _state.ShowTrafficArrows;
             Invalidate();
         };
+        _state.MapYawChanged += () =>
+        {
+            if (_view is not null) _view.MapYaw = _state.MapYaw;
+            Invalidate();
+        };
         _state.MapEdited += () =>
         {
             // ShowGroundLevel changes need a mesh rebuild since the tile mesh
@@ -139,6 +144,7 @@ public sealed class MapViewControl : GLControl
         _view.SetMap(_state.Map, _state.Style);
         _view.Resize(ClientSize.Width, ClientSize.Height);
         _view.Selection = _state.Selection is { } sel ? (sel.X, sel.Y, sel.Z) : null;
+        _view.MapYaw = _state.MapYaw;
         if (_view is MapView2D v2)
         {
             v2.ShowTrafficArrows = _state.ShowTrafficArrows;

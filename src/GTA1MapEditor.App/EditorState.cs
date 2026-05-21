@@ -107,6 +107,12 @@ public sealed class EditorState
     /// <summary>If true, MapView2D draws nav-flag arrows on every drivable tile.</summary>
     public bool ShowTrafficArrows { get; set; }
 
+    /// <summary>
+    /// Quarter-turn rotation (0..3) applied to the rendered world in every
+    /// view. Lets the user align iso/3D with top-down for visual comparison.
+    /// </summary>
+    public int MapYaw { get; private set; }
+
     /// <summary>If true, top-down view renders the player's ground level (skips decorative overlays only). False (default) renders the topmost lid in each column, like Junction25.</summary>
     public bool ShowGroundLevel { get; set; }
 
@@ -122,6 +128,7 @@ public sealed class EditorState
     public event Action? ViewModeChanged;
     public event Action? CommandsChanged;
     public event Action? OverlaysChanged;
+    public event Action? MapYawChanged;
 
     public EditorState()
     {
@@ -181,6 +188,13 @@ public sealed class EditorState
     {
         ShowTrafficArrows = !ShowTrafficArrows;
         OverlaysChanged?.Invoke();
+    }
+
+    /// <summary>Advance MapYaw by 90° clockwise. Wraps at 4.</summary>
+    public void CycleMapYaw()
+    {
+        MapYaw = (MapYaw + 1) & 3;
+        MapYawChanged?.Invoke();
     }
 
     public void ToggleGroundLevel()

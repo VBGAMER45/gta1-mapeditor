@@ -209,6 +209,14 @@ public sealed class MainForm : Form
         bar.Items.Add(vTop);
         bar.Items.Add(vIso);
         bar.Items.Add(v3D);
+        bar.Items.Add(new ToolStripSeparator());
+
+        var rotBtn = new ToolStripButton("Rotate", null, (_, _) => _state.CycleMapYaw())
+        {
+            ToolTipText = "Rotate the map 90° clockwise (applies to 2D, Iso and 3D)",
+        };
+        _state.MapYawChanged += () => rotBtn.Text = _state.MapYaw == 0 ? "Rotate" : $"Rotate ({_state.MapYaw * 90}°)";
+        bar.Items.Add(rotBtn);
 
         return bar;
     }

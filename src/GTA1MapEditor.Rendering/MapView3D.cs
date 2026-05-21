@@ -38,6 +38,7 @@ public sealed class MapView3D : IMapView
         """;
 
     private readonly GlShader _shader;
+    private readonly EntitySpriteRenderer _entitySprites = new();
     private int _vao, _vbo;
     private int _atlasTex;
     private int _vertexCount;
@@ -65,6 +66,7 @@ public sealed class MapView3D : IMapView
     public float ViewportHeight { get; private set; } = 1;
 
     public (int x, int y, int z)? Selection { get; set; }
+    public int MapYaw { get; set; }
     public bool UsesFlyCamera => true;
 
     public MapView3D()
@@ -86,6 +88,7 @@ public sealed class MapView3D : IMapView
         _map = map;
         _style = style;
         _atlas = TileAtlas.Build(style);
+        _entitySprites.SetMap(map, style);
         UploadAtlas();
         RebuildMesh();
     }
@@ -107,16 +110,28 @@ public sealed class MapView3D : IMapView
         GL.ClearColor(0.05f, 0.07f, 0.12f, 1f);
         GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
 
-        if (_vertexCount == 0) return;
-
         var mvp = BuildMvp();
-        _shader.Use();
-        GL.UniformMatrix4(_shader.GetUniform("uMvp"), false, ref mvp);
-        GL.ActiveTexture(TextureUnit.Texture0);
-        GL.BindTexture(TextureTarget.Texture2D, _atlasTex);
-        GL.Uniform1(_shader.GetUniform("uTex"), 0);
-        GL.BindVertexArray(_vao);
-        GL.DrawArrays(PrimitiveType.Triangles, 0, _vertexCount);
+        if (_vertexCount > 0)
+        {
+            _shader.Use();
+            GL.UniformMatrix4(_shader.GetUniform("uMvp"), false, ref mvp);
+            GL.ActiveTexture(TextureUnit.Texture0);
+            GL.BindTexture(TextureTarget.Texture2D, _atlasTex);
+            GL.Uniform1(_shader.GetUniform("uTex"), 0);
+            GL.BindVertexArray(_vao);
+            GL.DrawArrays(PrimitiveType.Triangles, 0, _vertexCount);
+        }
+
+        // Sprites: depth-test against walls/lids (so a sprite behind a building
+        // is properly occluded) but don't WRITE depth — that lets us draw them
+        // at the exact entity Z without z-fighting the lid below, and avoids
+        // any visible vertical shift. Lequal so a sprite sitting flush on a lid
+        // (same z) still draws.
+        GL.DepthFunc(DepthFunction.Lequal);
+        GL.DepthMask(false);
+        _entitySprites.Render(mvp, zLift: 0f, snapToColumnTop: true);
+        GL.DepthMask(true);
+        GL.DepthFunc(DepthFunction.Less);
     }
 
     public void Resize(int width, int height)
@@ -203,6 +218,7 @@ public sealed class MapView3D : IMapView
 
     public void Dispose()
     {
+        _entitySprites.Dispose();
         _shader.Dispose();
         GL.DeleteBuffer(_vbo);
         GL.DeleteVertexArray(_vao);
@@ -235,6 +251,8 @@ public sealed class MapView3D : IMapView
             MathHelper.DegreesToRadians(FieldOfViewDegrees),
             Math.Max(aspect, 0.01f),
             0.1f, 2000f);
-        return view * proj;
+        // World rotation goes first (applied to vertices before view*proj)
+        // so the shared MapYaw aligns 3D with 2D / iso.
+        return WorldRotation.Build(MapYaw) * view * proj;
     }
 }

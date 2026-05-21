@@ -18,6 +18,13 @@ public interface IMapView : IDisposable
     (int x, int y, int z)? Selection { get; set; }
 
     /// <summary>
+    /// Quarter-turn world rotation (0..3) applied around the map center
+    /// before projection. Same value across all three views so users can
+    /// flip 2D / iso / 3D to the same orientation for comparison.
+    /// </summary>
+    int MapYaw { get; set; }
+
+    /// <summary>
     /// Camera focus point in world (tile) coordinates. For top-down this is
     /// the orthographic center; for iso it's the look-at target; for 3D it's
     /// projected to the ground plane and may behave loosely (fly-cam doesn't
